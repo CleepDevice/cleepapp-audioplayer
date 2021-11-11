@@ -1,0 +1,14 @@
+{
+    "icon": "music-circle",
+    "global": {
+        "js": ["audioplayer.service.js"],
+        "html": [],
+        "css": []
+    },
+    "config": {
+        "js": ["audioplayer.config.js"],
+        "html": ["audioplayer.config.html", "playlist.dialog.html"],
+        "css": []
+    }
+}
+    

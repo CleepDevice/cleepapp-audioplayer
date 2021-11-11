@@ -1,0 +1,92 @@
+<md-dialog aria-label="Add sensor dialog" flex="50">
+    <form ng-cloak>
+        <md-toolbar>
+            <div class="md-toolbar-tools">
+                <h2>Player</h2>
+                <span flex></span>
+                <md-button class="md-icon-button" ng-click="audioplayerCtl.cancelDialog()" aria-label="Close dialog">
+                    <md-icon md-svg-icon="close"></md-icon>
+                </md-button>
+            </div>
+        </md-toolbar>
+
+        <md-dialog-content class="md-dialog-content" layout-padding>
+            <md-list>
+
+                <md-subheader class="md-no-sticky" style="background-color: #FFFFFF">Controls</md-subheader>
+                <md-list-item>
+                    <md-icon md-svg-icon="chevron-right"></md-icon>
+                    <p>Controls</p>
+                    <md-input-container md-no-float class="md-secondary no-margin" layout="row" layout-align="start center" layout-padding>
+                        <md-button ng-click="audioplayerCtl.previous(audioplayerCtl.selectedPlayerId)" class="md-raised md-primary">
+                            <md-tooltip>Play previous track</md-tooltip>
+                            <md-icon md-svg-icon="skip-previous"></md-icon>
+                        </md-button>
+                        <md-button ng-click="audioplayerCtl.pause(audioplayerCtl.selectedPlayerId)" class="md-raised md-primary">
+                            <md-tooltip>Toggle play/pause</md-tooltip>
+                            <md-icon md-svg-icon="play-pause"></md-icon>
+                        </md-button>
+                        <md-button ng-click="audioplayerCtl.stop(audioplayerCtl.selectedPlayerId)" class="md-raised md-primary">
+                            <md-tooltip>Stop playback</md-tooltip>
+                            <md-icon md-svg-icon="stop"></md-icon>
+                        </md-button>
+                        <md-button ng-click="audioplayerCtl.next(audioplayerCtl.selectedPlayerId)" class="md-raised md-primary">
+                            <md-tooltip>Play next track</md-tooltip>
+                            <md-icon md-svg-icon="skip-next"></md-icon>
+                        </md-button>
+                    </md-input-container>
+                </md-list-item>
+                <md-list-item>
+                    <md-icon md-svg-icon="chevron-right"></md-icon>
+                    <p>Volume</p>
+                    <md-slider flex min="0" max="100" step="5" aria-label="Volume" class="md-primary" md-discrete
+                        ng-model="audioplayerCtl.volume"
+                        ng-model-options="{ debounce: 750 }"
+                        ng-change="audioplayerCtl.setVolume(audioplayerCtl.selectedPlayerId, audioplayerCtl.volume)">
+                </md-list-item>
+
+                <md-subheader class="md-no-sticky" style="background-color: #FFFFFF">Add track to playlist</md-subheader>
+                <md-list-item>
+                    <md-icon md-svg-icon="chevron-right"></md-icon>
+                    <p>Add stream</p>
+                    <md-input-container md-no-float class="md-secondary no-margin" layout="row" layout-align="start center" layout-padding>
+                        <div class="no-md-error">
+                            <input ng-model="audioplayerCtl.url" placeholder="Stream url" aria-label="Stream url" class="no-margin">
+                        </div>
+                    </md-input-container>
+                    <md-input-container md-no-float class="md-secondary no-margin" layout="row" layout-align="start center" layout-padding>
+                        <md-select ng-model="audioplayerCtl.selectedFormat" aria-label="Select audio format">
+                            <md-option ng-repeat="format in audioplayerCtl.formats" value="{{ format.value }}">
+                                {{ format.label }}
+                            </md-option>
+                        </md-select>
+                    </md-input-container>
+                    <md-input-container md-no-float class="md-secondary no-margin" layout="row" layout-align="start center" layout-padding>
+                        <div class="no-md-error">
+                            <input ng-model="audioplayerCtl.trackIndex" type="number" placeholder="Track index" aria-label="Track index" class="no-margin" min="0" style="width: 50px;">
+                        </div>
+                    </md-input-container>
+                    <md-input-container md-no-float class="md-secondary no-margin" layout="row" layout-align="start center" layout-padding>
+                        <md-button ng-click="audioplayerCtl.addTrack()" class="md-raised md-primary">
+                            <md-tooltip>Add track</md-tooltip>
+                            <md-icon md-svg-icon="playlist-plus"></md-icon>
+                        </md-button>
+                    </md-input-container>
+                </md-list-item>
+
+                <md-subheader class="md-no-sticky" style="background-color: #FFFFFF">Playlist</md-subheader>
+                <md-list-item ng-repeat="track in audioplayerCtl.playlist.tracks">
+                    <md-icon md-svg-icon="music-note" ng-if="audioplayerCtl.playlist.current!==$index"></md-icon>
+                    <md-icon md-svg-icon="play" ng-if="audioplayerCtl.playlist.current===$index"></md-icon>
+                    <p> {{ track.resource }} ({{ track.audio_format }})</p>
+                    <div class="md-secondary">
+                        <md-button class="md-raised md-primary" ng-click="audioplayerCtl.removeTrack(audioplayerCtl.selectedPlayerId, $index)">
+                            <md-tooltip>Remove track from playlist</md-tooltip>
+                            <md-icon md-svg-icon="playlist-remove"></md-icon>
+                        </md-button>
+                    </div>
+                </md-list-item>
+            </md-list>
+        </md-dialog-content>
+    </form>
+</md-dialog>
