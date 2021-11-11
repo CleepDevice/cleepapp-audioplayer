@@ -56,6 +56,19 @@ function($rootScope, rpcService) {
         });
     };
 
+    self.setRepeat = function(playerId, repeat) {
+        return rpcService.sendCommand('set_repeat', 'audioplayer', {
+            player_uuid: playerId,
+            repeat: repeat,
+        });
+    };
+
+    self.shufflePlaylist = function(playerId, repeat) {
+        return rpcService.sendCommand('shuffle_playlist', 'audioplayer', {
+            player_uuid: playerId,
+        });
+    };
+
     self.getPlaylist = function(playerId) {
         return rpcService.sendCommand('get_playlist', 'audioplayer', {
             player_uuid: playerId,

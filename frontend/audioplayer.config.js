@@ -18,11 +18,12 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
             { label: 'flac', value: 'audio/flac' },
         ];
         self.selectedFormat = 'audio/mpeg';
-        self.url = 'http://tanguy.duckdns.org/music.mp3';
+        self.url = '/root/temp/placebo.mp3';
         self.trackIndex = 0;
         self.playlist = undefined;
         self.selectedPlayerId = undefined;
         self.volume = 100;
+        self.repeat = false;
 
         self.$onInit = function() {
             audioplayerService.refreshPlayers();
@@ -53,6 +54,20 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
             audioplayerService.setVolume(playerId, self.volume);
         };
 
+        self.setRepeat = function(playerId) {
+            audioplayerService.setRepeat(playerId, self.repeat);
+        };
+
+        self.shufflePlaylist = function(playerId) {
+            audioplayerService.shufflePlaylist(playerId)
+                .then((response) => {
+                    if (response.error) {
+                        return;
+                    }
+                    self.loadPlaylist(self.selectedPlayerId);
+                });
+        };
+
         self.addTrack = function(playerId) {
             audioplayerService.addTrack(self.selectedPlayerId, self.url, self.selectedFormat, self.trackIndex)
                 .then((response) => {
@@ -78,6 +93,7 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
                 .then((response) => {
                     self.playlist = response.data;
                     self.selectedPlayerId = playerId;
+                    self.repeat = self.playlist.repeat;
                 });
         };
 

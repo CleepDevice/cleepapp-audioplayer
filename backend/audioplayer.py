@@ -7,6 +7,7 @@ gi.require_version("Gst", "1.0")
 from gi.repository import Gst, GLib
 import magic
 import os
+import random
 from urllib3.util import parse_url
 from cleep.exception import MissingParameter, InvalidParameter, CommandError
 from cleep.core import CleepModule
@@ -116,7 +117,7 @@ class Audioplayer(CleepModule):
         # list of players ::
         #   {
         #       player_uuid (string): {
-        #           see list of fields in _get_player
+        #           see list of fields in __create_player
         #       },
         #       ...
         #   }
@@ -144,40 +145,25 @@ class Audioplayer(CleepModule):
         for player_uuid in players_to_delete:
             self.__destroy_player(self.players[player_uuid])
 
-    def _get_player(self, source, audio_format, player_uuid=None):
+    def __prepare_player(self, player_uuid, source, audio_format):
         """
-        Get pipeline for playback
+        Prepare player for playback
 
         It returns existing pipeline if possible or create new one
 
         Args:
+            player_uuid (string): existing player id
             source (Gst.ElementFactory): gstreamer source element
             audio_format (string): audio format (mime)
-            player_uuid (string): existing player id
 
         Returns:
-            dict: player struct as returned bu _create_player
-            None: if problem occured
+            player (dict): player as returned by __create_player
         """
-        if player_uuid and player_uuid not in self.players:
-            # no player found while it should (uuid specified)
-            return None
+        if player_uuid not in self.players:
+            raise Exception('Player not found')
 
-        # get existing player if possible
-        player = None
-        if player_uuid:
-            player = self.players[player_uuid]
-
-        # create new player or reset existing one
-        if not player:
-            self.logger.debug("Create new player")
-            player = self.__create_player()
-            self.players[player["uuid"]] = player
-        else:
-            self.logger.debug("Reset existing player")
-            self.__reset_player(player)
-
-        # build player pipeline
+        player = self.players[player_uuid]
+        self.__reset_player(player)
         self.__build_pipeline(source, audio_format, player)
 
         return player
@@ -194,9 +180,8 @@ class Audioplayer(CleepModule):
                 state (string): player state (see PLAYER_STATE_XXX)
                 player (Gst.Pipeline): direct access to pipeline (aka player) (default None)
                 playlist (dict): {
-                    previous_tracks (list): list of previous tracks (default [])
-                    current_track (dict): current track (default None)
-                    next_tracks (list): list of next tracks (default [])
+                    current_index (number): current track (default None)
+                    tracks (list): list of tracks (default [])
                 }
                 source (Gst.ElementFactory): direct access to source element (default None)
                 volume (Gst.ElementFactory): direct access to volume element (default None)
@@ -207,9 +192,9 @@ class Audioplayer(CleepModule):
         return {
             "uuid": self._get_unique_id(),
             "playlist": {
-                "previous_tracks": [],
-                "current_track": None,
-                "next_tracks": [],
+                "current_index": None,
+                "tracks": [],
+                'repeat': False,
             },
             "player": None,
             "source": None,
@@ -224,13 +209,14 @@ class Audioplayer(CleepModule):
 
     def __reset_player(self, player):
         """
-        Reset existing player stuff
+        Reset existing player deleting gstreamer pipeline elements and resetting some internals flags
 
         Args:
             player (dict): structure as returned by __create_player
         """
         # make sure player is stopped
-        player["player"].set_state(Gst.State.NULL)
+        if player["player"]:
+            player["player"].set_state(Gst.State.NULL)
 
         # unlink pipeline elements
         previous = None
@@ -305,12 +291,12 @@ class Audioplayer(CleepModule):
         player["pipeline"].append(sink)
 
         # build player pipeline
-        self.logger.debug("build player %s pipeline" % player["uuid"])
+        self.logger.trace("build player %s pipeline" % player["uuid"])
         previous_element = player["pipeline"][0]
         pipeline.add(previous_element)
         for current_element in player["pipeline"][1:]:
             pipeline.add(current_element)
-            self.logger.debug(" - Link %s to %s" % (previous_element, current_element))
+            self.logger.trace(" - Link %s to %s" % (previous_element, current_element))
             previous_element.link(current_element)
             previous_element = current_element
 
@@ -454,8 +440,8 @@ class Audioplayer(CleepModule):
 
         for index in range(tags.n_tags()):
             tag_name = tags.nth_tag_name(index)
-            self.logger.trace(" => tag name: %s" % tag_name)
-            # self.logger.debug('All tags: %s' % tags.to_string())
+            # self.logger.trace(" => tag name: %s" % tag_name)
+            self.logger.debug('All tags: %s' % tags.to_string())
             if tag_name in ("artist", "album-artist"):
                 metadata["artist"] = tags.get_string(tag_name)[1]
             elif tag_name == "album":
@@ -545,7 +531,7 @@ class Audioplayer(CleepModule):
             "audio_format": audio_format,
         }
 
-    def add_track(self, player_uuid, resource, audio_format=None, track_index=0):
+    def add_track(self, player_uuid, resource, audio_format=None, track_index=None):
         """
         Add track in specified player playlist.
 
@@ -557,7 +543,7 @@ class Audioplayer(CleepModule):
             player_uuid (string): player identifier returned by play command
             resource (string): local filepath or url
             audio_format (string): audio format (mime). Mandatory if resource is an url
-            track_index (number): add new track to specified playlist position
+            track_index (number): add new track to specified playlist position or at end of playlist
         """
         if player_uuid not in self.players:
             raise CommandError('Player "%s" does not exists' % player_uuid)
@@ -569,7 +555,8 @@ class Audioplayer(CleepModule):
             % (resource, player_uuid, track_index)
         )
         track = self.__make_track(resource, audio_format)
-        self.players[player_uuid]["playlist"]["next_tracks"].append(track)
+        track_index = track_index or len(self.players[player_uuid]["playlist"]["tracks"])
+        self.players[player_uuid]["playlist"]["tracks"].insert(track_index, track)
         self.logger.debug(
             "Player %s playlist: %s"
             % (player_uuid, self.players[player_uuid]["playlist"])
@@ -585,22 +572,15 @@ class Audioplayer(CleepModule):
         """
         if player_uuid not in self.players:
             raise CommandError('Player "%s" does not exists' % player_uuid)
-        playlist = self.get_playlist(player_uuid)
-        if track_index < 0 or track_index >= len(playlist["tracks"]):
+        if track_index < 0 or track_index >= len(self.players[player_uuid]["playlist"]["tracks"]):
             raise CommandError("Track index is invalid")
-        if track_index == playlist["current"]:
+        if track_index == self.players[player_uuid]["playlist"]["current_index"]:
             raise CommandError("You can't remove current track")
 
-        if track_index < playlist["current"]:
-            self.players[player_uuid]["playlist"]["previous_tracks"].pop(track_index)
-        else:
-            previous_len = len(self.players[player_uuid]["playlist"]["previous_tracks"])
-            removed_track = self.players[player_uuid]["playlist"]["next_tracks"].pop(
-                track_index - previous_len - 1
-            )
-            self.logger.debug(
-                "Player %s has track removed: %s" % (player_uuid, removed_track)
-            )
+        removed_track = self.players[player_uuid]["playlist"]["tracks"].pop(track_index)
+        self.logger.debug(
+             "Player %s has track removed: %s" % (player_uuid, removed_track)
+        )
 
     def start_playback(self, resource, audio_format=None, volume=100):
         """
@@ -614,87 +594,63 @@ class Audioplayer(CleepModule):
         Returns:
             string: player identifier
         """
-        if self.__is_filepath(resource):
-            player_uuid = self.__play_file(resource, volume)
-        else:
-            player_uuid = self.__play_url(resource, audio_format, volume)
-        self.logger.info('Player "%s" is playing "%s"' % (player_uuid, resource))
+        player = self.__create_player()
+        track = self.__make_track(resource, audio_format)
+        player["playlist"]["current_index"] = 0
+        player['playlist']['tracks'].append(track)
+        self.players[player["uuid"]] = player
 
-        return player_uuid
+        try:
+            self.__play_track(track, player["uuid"], volume)
+        except:
+            self.__destroy_player(player)
 
-    def __play_file(self, filepath, volume=None, player_uuid=None):
+        return player['uuid']
+
+    def __play_track(self, track, player_uuid, volume=None):
         """
         Play audio stream to
 
         Args:
-            filepath (string): full file path to play
-            volume (int): player volume
             player_uuid (string): player identifier
-
-        Returns:
-            string: player uuid
+            volume (int): player volume
         """
-        self.logger.debug('Play file "%s" on player "%s"' % (filepath, player_uuid))
-        audio_format = self.__get_file_audio_format(filepath)
-        if not audio_format:
-            raise CommandError("Audio file not supported")
+        # prepare player
+        if self.__is_filepath(track["resource"]):
+            audio_format = self.__get_file_audio_format(track["resource"])
+            if not audio_format:
+                raise CommandError("Audio file not supported")
+            track["audio_format"] = audio_format
+            source = Gst.ElementFactory.make("filesrc", "source")
+        else:
+            source = Gst.ElementFactory.make("souphttpsrc", "source")
+        player = self.__prepare_player(player_uuid, source, track["audio_format"])
 
-        # get player
-        source = Gst.ElementFactory.make("filesrc", "source")
-        player = self._get_player(source, audio_format, player_uuid)
-        self.logger.debug("Player: %s" % player)
-        if not player:
-            raise CommandError("Player %s does not exist" % player_uuid)
+        try:
+            # configure player
+            player["source"].set_property("location", track["resource"])
+            if volume is not None:
+                player["volume"].set_property("volume", float(volume / 100.0))
 
-        # configure player
-        player["source"].set_property("location", filepath)
-        if volume is not None:
-            player["volume"].set_property("volume", float(volume / 100.0))
-        track = self.__make_track(filepath, audio_format)
-        player["playlist"]["current_track"] = track
-        self.logger.debug("Player %s playlist: %s" % (player_uuid, player["playlist"]))
+            # start playback
+            player["player"].set_state(Gst.State.PLAYING)
+            self.logger.info(f"Player {player_uuid} is playing {track}")
+        except Exception as error:
+            self.logger.exception(f'Error playing track {track} with {player_uuid}')
+            raise error
 
-        player["player"].set_state(Gst.State.PLAYING)
-
-        return player["uuid"]
-
-    def __play_url(self, url, audio_format, volume=None, player_uuid=None):
+    def _get_track_index(self, player_uuid, track):
         """
-        Play specified stream from url
+        Search track index in player playlist
 
         Args:
-            url (string): url
-            audio_format (string): audio format (mime type)
             player_uuid (string): player identifier
+            track (dict): track data
 
         Returns:
-            string: player uuid
+            number: track playlist index
         """
-        self.logger.debug('Play url "%s" on player "%s"' % (url, player_uuid))
-        if audio_format not in list(self.AUDIO_PIPELINE_ELEMENTS.keys()):
-            raise CommandError("Audio file not supported")
-
-        # get player
-        source = Gst.ElementFactory.make("souphttpsrc", "source")
-        player = self._get_player(source, audio_format, player_uuid)
-        self.logger.debug("Player: %s" % player)
-        if not player:
-            raise CommandError("Player %s does not exist" % player_uuid)
-
-        # configure player
-        player["source"].set_property("location", url)
-        if volume is not None:
-            player["volume"].set_property("volume", float(volume / 100.0))
-        track = self.__make_track(url, audio_format)
-        player["playlist"]["current_track"] = track
-        self.logger.debug(
-            "Player %s playlist: %s"
-            % (player["uuid"], self.players[player["uuid"]]["playlist"])
-        )
-
-        player["player"].set_state(Gst.State.PLAYING)
-
-        return player["uuid"]
+        return next((index for index, track in enumerate(self.players[player_uuid]["playlist"]["tracks"]) if track["resource"] == track["resource"]), 0)
 
     def pause_playback(self, player_uuid):
         """
@@ -766,8 +722,10 @@ class Audioplayer(CleepModule):
         """
         if player_uuid not in self.players:
             raise CommandError('Player "%s" does not exists' % player_uuid)
-        next_tracks = self.players[player_uuid]["playlist"]["next_tracks"]
-        if len(next_tracks) == 0:
+
+        playlist = self.players[player_uuid]["playlist"]
+        if playlist["current_index"]+1>=len(playlist["tracks"]):
+            self.logger.debug(f'Player {player_uuid} is already playing last playlist track')
             return False
 
         if not self.__play_next_track(player_uuid):
@@ -786,45 +744,46 @@ class Audioplayer(CleepModule):
         """
         if player_uuid not in self.players:
             return False
+        playlist = self.players[player_uuid]["playlist"]
+        if playlist["current_index"]+1>=len(playlist["tracks"]):
+            return self.__handle_end_of_playlist(player_uuid)
 
-        next_tracks = self.players[player_uuid]["playlist"]["next_tracks"]
-        if len(next_tracks) == 0:
-            # no more track to play destroy player
-            self.logger.debug(
-                "Player %s has no more tracks in playlist, destroy it" % player_uuid
-            )
-            self._destroy_player(self.players[player_uuid])
-            return False
-
-        current_track = self.players[player_uuid]["playlist"]["current_track"]
-        next_track = next_tracks.pop(0)
+        # update playlist
+        playlist["current_index"] += 1
+        next_track = playlist["tracks"][playlist["current_index"]]
         self.logger.debug(
             'Found next track to play on player "%s": %s' % (player_uuid, next_track)
         )
         try:
-            self.players[player_uuid]["playlist"]["previous_tracks"].append(
-                current_track
-            )
-            self.players[player_uuid]["playlist"]["current_track"] = next_track
-            if self.__is_filepath(next_track["resource"]):
-                self.__play_file(next_track["resource"], player_uuid=player_uuid)
-            else:
-                self.__play_url(
-                    next_track["resource"],
-                    next_track["audio_format"],
-                    player_uuid=player_uuid,
-                )
-            self.logger.info(
-                'Player "%s" is playing "%s"' % (player_uuid, next_track["resource"])
-            )
+            self.__play_track(next_track, player_uuid)
         except:
-            self.logger.exception(
-                "Error playing next track with player %s: %s"
-                % (player_uuid, next_track)
-            )
             return False
 
         return True
+
+    def __handle_end_of_playlist(self, player_uuid):
+        """
+        Handle end of playlist according to player configuration
+
+        Args:
+            player_uuid (string): player identifier
+
+        Returns:
+            boolean: True if playback continues, False otherwise
+        """
+        playlist = self.players[player_uuid]["playlist"]
+        if playlist["repeat"]:
+            # restart playlist
+            playlist["current_index"] = 0
+            track = playlist["tracks"][0]
+            self.__play_track(track, player_uuid)
+            self.logger.debug(f"Player {player_uuid} restarts playlist")
+            return True
+        else:
+            # no more track to play, destroy player
+            self.logger.debug(f"Player {player_uuid} has no more tracks in playlist, destroy it")
+            self._destroy_player(self.players[player_uuid])
+            return False
 
     def play_previous_track(self, player_uuid):
         """
@@ -839,42 +798,19 @@ class Audioplayer(CleepModule):
         """
         if player_uuid not in self.players:
             raise CommandError('Player "%s" does not exists' % player_uuid)
-
-        previous_tracks = self.players[player_uuid]["playlist"]["previous_tracks"]
-        if len(previous_tracks) == 0:
+        playlist = self.players[player_uuid]["playlist"]
+        self.logger.debug(f"Player {player_uuid} playlist: {playlist}")
+        if playlist["current_index"] == 0:
             self.logger.debug(
                 "Player %s has no previous track in playlist" % player_uuid
             )
             return False
 
-        current_track = self.players[player_uuid]["playlist"]["current_track"]
-        previous_track = previous_tracks.pop()
-        self.logger.debug(
-            'Found previous track to play on player "%s": %s'
-            % (player_uuid, previous_track)
-        )
+        playlist["current_index"] -= 1
+        previous_track = playlist["tracks"][playlist["current_index"]]
         try:
-            self.players[player_uuid]["playlist"]["next_tracks"].insert(
-                0, current_track
-            )
-            self.players[player_uuid]["playlist"]["current_track"] = previous_track
-            if self.__is_filepath(previous_track["resource"]):
-                self.__play_file(previous_track["resource"], player_uuid=player_uuid)
-            else:
-                self.__play_url(
-                    previous_track["resource"],
-                    previous_track["audio_format"],
-                    player_uuid=player_uuid,
-                )
-            self.logger.info(
-                'Player "%s" is playing "%s"'
-                % (player_uuid, previous_track["resource"])
-            )
+            self.__play_track(previous_track, player_uuid)
         except:
-            self.logger.exception(
-                "Error playing previous track with player %s: %s"
-                % (player_uuid, previous_track)
-            )
             return False
 
         return True
@@ -889,7 +825,7 @@ class Audioplayer(CleepModule):
         return [
             {
                 "playeruuid": player["uuid"],
-                "playback": player["playlist"]["current_track"],
+                "playback": player["playlist"]["tracks"][player["playlist"]["current_index"]],
                 "state": player["internal"]["last_state"],
             }
             for player in self.players.values()
@@ -907,21 +843,13 @@ class Audioplayer(CleepModule):
 
             {
                 tracks (list): list of tracks
-                current (number): current track index (0 is the first playlist track)
+                current_index (number): current track index (0 is the first playlist track)
             }
         """
         if player_uuid not in self.players:
             raise CommandError('Player "%s" does not exists' % player_uuid)
 
-        tracks = (
-            self.players[player_uuid]["playlist"]["previous_tracks"]
-            + [self.players[player_uuid]["playlist"]["current_track"]]
-            + self.players[player_uuid]["playlist"]["next_tracks"]
-        )
-        return {
-            "tracks": tracks,
-            "current": len(self.players[player_uuid]["playlist"]["previous_tracks"]),
-        }
+        return self.players[player_uuid]["playlist"]
 
     def set_volume(self, player_uuid, volume):
         """
@@ -939,3 +867,33 @@ class Audioplayer(CleepModule):
         self.players[player_uuid]["volume"].set_property(
             "volume", float(volume / 100.0)
         )
+
+    def set_repeat(self, player_uuid, repeat):
+        """
+        Repeat playlist when end of it is reached
+
+        Args:
+            player_uuid (string): player identifier
+            repeat (boolean): True to repeat playlist, False otherwise
+        """
+        if player_uuid not in self.players:
+            raise CommandError('Player "%s" does not exists' % player_uuid)
+
+        self.players[player_uuid]["playlist"]["repeat"] = repeat
+
+    def shuffle_playlist(self, player_uuid):
+        """
+        Shuffle playlist
+    
+        Args:
+            player_uuid (string): player identifier
+        """
+        if player_uuid not in self.players:
+            raise CommandError('Player "%s" does not exists' % player_uuid)
+        
+        tracks = self.players[player_uuid]["playlist"]["tracks"]
+        current_track = tracks.pop(self.players[player_uuid]["playlist"]["current_index"])
+        random.shuffle(tracks)
+        tracks.insert(0, current_track)
+        self.players[player_uuid]["playlist"]["current_index"] = 0
+

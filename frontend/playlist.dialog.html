@@ -44,6 +44,23 @@
                         ng-model-options="{ debounce: 750 }"
                         ng-change="audioplayerCtl.setVolume(audioplayerCtl.selectedPlayerId, audioplayerCtl.volume)">
                 </md-list-item>
+                <md-list-item>
+                    <md-icon md-svg-icon="chevron-right"></md-icon>
+                    <p>Repeat playlist</p>
+                    <md-checkbox class="md-secondary"
+                        ng-model="audioplayerCtl.repeat"
+                        ng-change="audioplayerCtl.setRepeat(audioplayerCtl.selectedPlayerId, audioplayerCtl.repeat)"
+                    ></md-checkbox>
+                </md-list-item>
+                <md-list-item>
+                    <md-icon md-svg-icon="chevron-right"></md-icon>
+                    <p>Shuffle playlist</p>
+                    <md-input-container md-no-float class="md-secondary no-margin" layout="row" layout-align="start center" layout-padding>
+                        <md-button ng-click="audioplayerCtl.shufflePlaylist(audioplayerCtl.selectedPlayerId)" class="md-raised md-primary">
+                            <md-icon md-svg-icon="shuffle"></md-icon>
+                        </md-button>
+                    </md-input-container>
+                </md-list-item>
 
                 <md-subheader class="md-no-sticky" style="background-color: #FFFFFF">Add track to playlist</md-subheader>
                 <md-list-item>
@@ -76,8 +93,8 @@
 
                 <md-subheader class="md-no-sticky" style="background-color: #FFFFFF">Playlist</md-subheader>
                 <md-list-item ng-repeat="track in audioplayerCtl.playlist.tracks">
-                    <md-icon md-svg-icon="music-note" ng-if="audioplayerCtl.playlist.current!==$index"></md-icon>
-                    <md-icon md-svg-icon="play" ng-if="audioplayerCtl.playlist.current===$index"></md-icon>
+                    <md-icon md-svg-icon="music-note" ng-if="audioplayerCtl.playlist.current_index!==$index"></md-icon>
+                    <md-icon md-svg-icon="play" ng-if="audioplayerCtl.playlist.current_index===$index"></md-icon>
                     <p> {{ track.resource }} ({{ track.audio_format }})</p>
                     <div class="md-secondary">
                         <md-button class="md-raised md-primary" ng-click="audioplayerCtl.removeTrack(audioplayerCtl.selectedPlayerId, $index)">
