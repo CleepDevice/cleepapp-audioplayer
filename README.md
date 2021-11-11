@@ -23,7 +23,7 @@ The player is able to cast metadata of played resource only. It does not parse a
 
 ### Playlist
 
-Minimalist efforts on playlist are available:
+Some playlist features are available:
 * remove track from playlist
 * add track on specific playlist position
 * shuffle tracks
@@ -33,5 +33,7 @@ Minimalist efforts on playlist are available:
 
 A player is alive until there is no track to play in its playlist.
 
-A player in pause state stays alive indefinitely
+A player in pause state stays alive indefinitely.
+
+A player with repeat enabled on playlist will play forever.
 
