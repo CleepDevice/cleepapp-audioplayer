@@ -195,6 +195,7 @@ class Audioplayer(CleepModule):
                 "current_index": None,
                 "tracks": [],
                 'repeat': False,
+                'volume': 0,
             },
             "player": None,
             "source": None,
@@ -597,6 +598,7 @@ class Audioplayer(CleepModule):
         player = self.__create_player()
         track = self.__make_track(resource, audio_format)
         player["playlist"]["current_index"] = 0
+        player["playlist"]["volume"] = volume
         player['playlist']['tracks'].append(track)
         self.players[player["uuid"]] = player
 
@@ -867,6 +869,7 @@ class Audioplayer(CleepModule):
         self.players[player_uuid]["volume"].set_property(
             "volume", float(volume / 100.0)
         )
+        self.players[player_uuid]['playlist']['volume'] = volume
 
     def set_repeat(self, player_uuid, repeat):
         """

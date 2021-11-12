@@ -94,6 +94,7 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
                     self.playlist = response.data;
                     self.selectedPlayerId = playerId;
                     self.repeat = self.playlist.repeat;
+                    self.volume = self.playlist.volume;
                 });
         };
 

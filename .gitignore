@@ -1,0 +1,10 @@
+**/*.pyc
+**/.coverage
+**/.coveralls.yml
+docs/*.zip
+docs/*.txt
+docs/*.xml
+docs/source
+docs/_build
+.vscode
+**/*.swp
