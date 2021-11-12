@@ -10,7 +10,19 @@ class AudioplayerMetadataUpdateEvent(Event):
     """
 
     EVENT_NAME = "audioplayer.metadata.update"
-    EVENT_PARAMS = ["playeruuid", "artist", "album", "year", "genre", "track", "title", "channel", "bitratemin", "bitratemax", "bitrateavg"]
+    EVENT_PARAMS = [
+        "playeruuid",
+        "artist",
+        "album",
+        "year",
+        "genre",
+        "track",
+        "title",
+        "channel",
+        "bitratemin",
+        "bitratemax",
+        "bitrateavg",
+    ]
 
     def __init__(self, params):
         """
@@ -20,4 +32,3 @@ class AudioplayerMetadataUpdateEvent(Event):
             params (dict): event parameters
         """
         Event.__init__(self, params)
-

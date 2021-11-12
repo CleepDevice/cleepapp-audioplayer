@@ -20,4 +20,3 @@ class AudioplayerPlaybackUpdateEvent(Event):
             params (dict): event parameters
         """
         Event.__init__(self, params)
-
