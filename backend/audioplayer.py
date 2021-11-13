@@ -10,6 +10,7 @@ import magic
 from urllib3.util import parse_url
 from cleep.exception import MissingParameter, InvalidParameter, CommandError
 from cleep.core import CleepModule
+from cleep.common import CATEGORIES
 
 
 class Audioplayer(CleepModule):
@@ -32,11 +33,11 @@ class Audioplayer(CleepModule):
         "</ul>"
     )
     MODULE_TAGS = []
-    MODULE_CATEGORY = "TODO"
-    MODULE_URLINFO = "https://www.google.com"
+    MODULE_CATEGORY = CATEGORIES.MEDIA
+    MODULE_URLINFO = "https://github.com/tangb/cleepapp-audioplayer"
     MODULE_URLHELP = None
     MODULE_URLSITE = None
-    MODULE_URLBUGS = None
+    MODULE_URLBUGS = "https://github.com/tangb/cleepapp-audioplayer/issues"
 
     MODULE_CONFIG_FILE = "audioplayer.conf"
     DEFAULT_CONFIG = {}
@@ -159,7 +160,7 @@ class Audioplayer(CleepModule):
             player (dict): player as returned by __create_player
         """
         if player_uuid not in self.players:
-            raise Exception("Player not found")
+            raise Exception(f'Player "{player_uuid}" does not exist')
 
         player = self.players[player_uuid]
         self.__reset_player(player)
@@ -201,7 +202,7 @@ class Audioplayer(CleepModule):
             "volume": None,
             "pipeline": [],
             "internal": {
-                "todestroy": False,
+                "to_destroy": False,
                 "tags_sent": False,
                 "last_state": Gst.State.NULL,
             },
@@ -250,7 +251,7 @@ class Audioplayer(CleepModule):
         Set player destroy flag to True to perform safe player deletion during
         process loop
         """
-        player["internal"]["todestroy"] = True
+        player["internal"]["to_destroy"] = True
 
     # pylint: disable=R0201
     def __destroy_player(self, player):
@@ -318,7 +319,7 @@ class Audioplayer(CleepModule):
         players_to_delete = [
             player_uuid
             for player_uuid, player in self.players.items()
-            if player["internal"]["todestroy"]
+            if player["internal"]["to_destroy"]
         ]
         if len(players_to_delete) > 0:
             self.logger.debug("Players to delete: %s", players_to_delete)
@@ -434,7 +435,7 @@ class Audioplayer(CleepModule):
 
         for index in range(tags.n_tags()):
             tag_name = tags.nth_tag_name(index)
-            # self.logger.trace(f" => tag name: {tage_name}")
+            # self.logger.trace(f" => tag name: {tag_name}")
             self.logger.debug("All tags: %s", tags.to_string())
             if tag_name in ("artist", "album-artist"):
                 metadata["artist"] = tags.get_string(tag_name)[1]
