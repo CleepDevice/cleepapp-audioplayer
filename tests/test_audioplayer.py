@@ -83,7 +83,7 @@ class TestAudioplayer(unittest.TestCase):
             "volume": None,
             "pipeline": [], 
             "internal": {
-                "todestroy": False,
+                "to_destroy": False,
                 "tags_sent": False,
             # NOT TESTED
             #    "last_state": Gst.State.NULL,
@@ -197,6 +197,139 @@ class TestAudioplayer(unittest.TestCase):
 
         self.module._Audioplayer__reset_player.assert_called_with(player_data)
         self.assertEqual(len(self.module.players), 0)
+
+    @patch('backend.audioplayer.Gst.Pipeline')
+    @patch('backend.audioplayer.Gst.ElementFactory')
+    def test__build_pipeline(self, elementFactoryMock, pipelineMock):
+        self.init()
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': ['track1', 'track2', 'track3'],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': None,
+            'source': None,
+            'volume': None,
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        sourceMock = Mock()
+        
+        self.module._Audioplayer__build_pipeline(sourceMock, 'audio/mpeg', player_data)
+
+        pipelineMock.new.assert_called_once_with('the-uuid')
+        self.assertEqual(len(player_data['pipeline']), len(Audioplayer.AUDIO_PIPELINE_ELEMENTS["audio/mpeg"])+4)
+        self.assertIsNotNone(player_data['player'])
+        self.assertIsNotNone(player_data['source'])
+        self.assertIsNotNone(player_data['volume'])
+        self.assertEqual(elementFactoryMock.make.call_count, len(player_data['pipeline'])-1) # -1 because source element is created elsewhere
+
+    @patch('backend.audioplayer.Gst.Pipeline')
+    @patch('backend.audioplayer.Gst.ElementFactory')
+    def test__build_pipeline_exception(self, elementFactoryMock, pipelineMock):
+        self.init()
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': ['track1', 'track2', 'track3'],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': None,
+            'source': None,
+            'volume': None,
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        sourceMock = Mock()
+        elementFactoryMock.make.side_effect = [Mock(), Mock(), Mock(), None]
+        
+        with self.assertRaises(Exception) as cm:
+            self.module._Audioplayer__build_pipeline(sourceMock, 'audio/mpeg', player_data)
+        self.assertEqual(str(cm.exception), 'Error configuring audio player')
+        player_data['pipeline'].clear()
+
+    def test_on_process(self):
+        self.init()
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': ['track1', 'track2', 'track3'],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': None,
+            'source': None,
+            'volume': None,
+            'pipeline': [],
+            'internal': {
+                'to_destroy': True,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._Audioplayer__process_players_messages = Mock()
+        self.module._Audioplayer__destroy_player = Mock()
+
+        self.module._on_process()
+
+        self.module._Audioplayer__process_players_messages.assert_called_once()
+        self.module._Audioplayer__destroy_player.assert_called_once_with(player_data)
+
+    def test_on_process_no_player_to_destroy(self):
+        self.init()
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': ['track1', 'track2', 'track3'],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': None,
+            'source': None,
+            'volume': None,
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._Audioplayer__process_players_messages = Mock()
+        self.module._Audioplayer__destroy_player = Mock()
+
+        self.module._on_process()
+
+        self.module._Audioplayer__process_players_messages.assert_called_once()
+        self.assertEqual(self.module._Audioplayer__destroy_player.call_count, 0)
+
+    def test_on_process_no_player(self):
+        self.init()
+        self.module._Audioplayer__process_players_messages = Mock()
+        self.module._Audioplayer__destroy_player = Mock()
+
+        self.module._on_process()
+
+        self.module._Audioplayer__process_players_messages.assert_called_once()
+        self.assertEqual(self.module._Audioplayer__destroy_player.call_count, 0)
 
 
 if __name__ == '__main__':

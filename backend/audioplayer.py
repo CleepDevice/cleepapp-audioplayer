@@ -289,7 +289,7 @@ class Audioplayer(CleepModule):
                 self.logger.error(
                     'No gstreamer element created for "%s:%s"', key, value
                 )
-                raise Exception("Error configuring music player")
+                raise Exception("Error configuring audio player")
             player["pipeline"].append(element)
         player["pipeline"].append(volume)
         player["pipeline"].append(sink)
