@@ -5,15 +5,22 @@ import logging
 import sys
 sys.path.append('../')
 from backend.audioplayer import Audioplayer
+from backend.audioplayer import Gst
 from cleep.exception import InvalidParameter, MissingParameter, CommandError, Unauthorized
 from cleep.libs.tests import session
 from mock import Mock, patch
+
+class GstreamerMsg:
+    pass
+
+class ParseUrlResult:
+    pass
 
 class TestAudioplayer(unittest.TestCase):
 
     def setUp(self):
         logging.basicConfig(level=logging.DEBUG, format=u'%(asctime)s %(name)s:%(lineno)d %(levelname)s : %(message)s')
-        self.session = session.TestSession(logging.DEBUG)
+        self.session = session.TestSession(self)
 
     def tearDown(self):
         self.session.clean()
@@ -330,7 +337,412 @@ class TestAudioplayer(unittest.TestCase):
 
         self.module._Audioplayer__process_players_messages.assert_called_once()
         self.assertEqual(self.module._Audioplayer__destroy_player.call_count, 0)
+ 
+    def test__process_players_messages(self):
+        self.init()
+        player1_mock = Mock()
+        player1_mock.get_bus.return_value.pop.side_effect = ['msg1', 'msg2', None]
+        player2_mock = Mock()
+        player2_mock.get_bus.return_value.pop.side_effect = ['msg3', None]
+        self.module.players = {
+            'uuid1': {
+                'uuid': 'uuid1',
+                'player': player1_mock,
+                'pipeline': [],
+                'internal': {
+                    'to_destroy': False,
+                },
+            },
+            'uuid2': {
+                'uuid': 'uuid2',
+                'player': player2_mock,
+                'pipeline': [],
+                'internal': {
+                    'to_destroy': False,
+                },
+            },
+        }
+        self.module._Audioplayer__process_gstreamer_message = Mock()
+        
+        self.module._Audioplayer__process_players_messages()
 
+        self.module._Audioplayer__process_gstreamer_message.assert_any_call('uuid1', session.AnyArg(), 'msg1')
+        self.module._Audioplayer__process_gstreamer_message.assert_any_call('uuid1', session.AnyArg(), 'msg2')
+        self.module._Audioplayer__process_gstreamer_message.assert_any_call('uuid2', session.AnyArg(), 'msg3')
+
+    def test__process_players_messages_no_player(self):
+        self.init()
+        self.module._Audioplayer__process_gstreamer_message = Mock()
+        
+        self.module._Audioplayer__process_players_messages()
+
+        self.module._Audioplayer__process_gstreamer_message.assert_not_called()
+
+    def test__process_players_messages(self):
+        self.init()
+        player1_mock = Mock()
+        player1_mock.get_bus.return_value.pop.side_effect = Exception('Test exception')
+        self.module.players = {
+            'uuid1': {
+                'uuid': 'uuid1',
+                'player': player1_mock,
+                'pipeline': [],
+                'internal': {
+                    'to_destroy': False,
+                },
+            },
+        }
+        self.module._Audioplayer__process_gstreamer_message = Mock()
+        self.module.logger.exception = Mock()
+        
+        self.module._Audioplayer__process_players_messages()
+
+        self.module.logger.exception.assert_called_with('Error processing player "%s" messages', 'uuid1')
+
+    def test__process_gstreamer_message_eos(self):
+        self.init()
+        msg = GstreamerMsg()
+        msg.type = Gst.MessageType.EOS
+        player = Mock()
+        self.module._Audioplayer__play_next_track = Mock()
+        self.module._Audioplayer__send_playback_event = Mock()
+
+        self.module._Audioplayer__process_gstreamer_message('the-uuid', player, msg)
+
+        player.set_state.assert_called_with(Gst.State.NULL)
+        self.module._Audioplayer__play_next_track.assert_called_with('the-uuid')
+        self.module._Audioplayer__send_playback_event.assert_called_with('the-uuid', player)
+
+    def test__process_gstreamer_message_state_changed(self):
+        self.init()
+        msg = GstreamerMsg()
+        msg.type = Gst.MessageType.STATE_CHANGED
+        player = Mock()
+        self.module._Audioplayer__play_next_track = Mock()
+        self.module._Audioplayer__send_playback_event = Mock()
+
+        self.module._Audioplayer__process_gstreamer_message('the-uuid', player, msg)
+
+        player.set_state.assert_not_called()
+        self.module._Audioplayer__play_next_track.assert_not_called()
+        self.module._Audioplayer__send_playback_event.assert_called_with('the-uuid', player)
+
+    def test__process_gstreamer_message_error(self):
+        self.init()
+        msg = GstreamerMsg()
+        msg.type = Gst.MessageType.ERROR
+        msg.parse_error = Mock(return_value=('error', 'debug'))
+        player = Mock()
+        self.module._Audioplayer__play_next_track = Mock()
+        self.module._Audioplayer__send_playback_event = Mock()
+
+        self.module._Audioplayer__process_gstreamer_message('the-uuid', player, msg)
+
+        player.set_state.assert_called_with(Gst.State.NULL)
+        msg.parse_error.assert_called()
+        self.module._Audioplayer__play_next_track.assert_not_called()
+        self.module._Audioplayer__send_playback_event.assert_called_with('the-uuid', player)
+
+    def test__process_gstreamer_message_tag(self):
+        self.init()
+        msg = GstreamerMsg()
+        msg.type = Gst.MessageType.TAG
+        tag = {'album': 'dummy'}
+        msg.parse_tag = Mock(return_value=tag)
+        player = Mock()
+        self.module.players = {
+            'the-uuid': {
+                'uuid': 'the-uuid',
+                'player': None,
+                'pipeline': [],
+                'internal': {
+                    'tags_sent': False,
+                    'to_destroy': False,
+                }
+            }
+        }
+        self.module._Audioplayer__play_next_track = Mock()
+        self.module._Audioplayer__send_playback_event = Mock()
+        self.module._Audioplayer__get_audio_metadata = Mock(return_value=tag)
+
+        self.module._Audioplayer__process_gstreamer_message('the-uuid', player, msg)
+
+        player.set_state.assert_not_called()
+        msg.parse_tag.assert_called()
+        self.module._Audioplayer__get_audio_metadata.assert_called_with(tag)
+        self.module._Audioplayer__play_next_track.assert_not_called()
+        self.module._Audioplayer__send_playback_event.assert_not_called()
+        self.session.assert_event_called_with('audioplayer.metadata.update', {
+            'album': 'dummy',
+            'playeruuid': 'the-uuid'
+        })
+        self.assertTrue(self.module.players['the-uuid']['internal']['tags_sent'])
+        
+        # call another time to check tags are not read again
+        msg.parse_tag.reset_mock()
+        self.module._Audioplayer__process_gstreamer_message('the-uuid', player, msg)
+        msg.parse_tag.assert_not_called()
+
+    def test__process_gstreamer_message_duration_changed(self):
+        self.init()
+        msg = GstreamerMsg()
+        msg.type = Gst.MessageType.DURATION_CHANGED
+        player = Mock()
+        player.query_duration = Mock(return_value=(True, 66.6))
+        self.module._Audioplayer__play_next_track = Mock()
+        self.module._Audioplayer__send_playback_event = Mock()
+
+        self.module._Audioplayer__process_gstreamer_message('the-uuid', player, msg)
+
+        player.set_state.assert_not_called()
+        self.module._Audioplayer__play_next_track.assert_not_called()
+        self.module._Audioplayer__send_playback_event.assert_not_called()
+        player.query_duration.assert_called_with(Gst.Format.TIME)
+
+    def test__send_playback_event(self):
+        self.init()
+        player = Mock()
+        player.get_state = Mock(return_value=('dummy', Gst.State.PAUSED, 'dummy'))
+        self.module.players = {
+            'the-uuid': {
+                'uuid': 'the-uuid',
+                'player': None,
+                'pipeline': [],
+                'internal': {
+                    'tags_sent': False,
+                    'to_destroy': False,
+                    'last_state': None,
+                }
+            }
+        }
+
+        self.module._Audioplayer__send_playback_event('the-uuid', player)
+
+        self.assertEqual(self.module.players['the-uuid']['internal']['last_state'], Gst.State.PAUSED)
+        self.session.assert_event_called_with('audioplayer.playback.update', {
+            'playeruuid': 'the-uuid',
+            'state': Gst.State.PAUSED,
+        })
+
+    def test__send_playback_event_same_state(self):
+        self.init()
+        player = Mock()
+        player.get_state = Mock(return_value=('dummy', Gst.State.PAUSED, 'dummy'))
+        self.module.players = {
+            'the-uuid': {
+                'uuid': 'the-uuid',
+                'player': None,
+                'pipeline': [],
+                'internal': {
+                    'tags_sent': False,
+                    'to_destroy': False,
+                    'last_state': Gst.State.PAUSED,
+                }
+            }
+        }
+
+        self.module._Audioplayer__send_playback_event('the-uuid', player)
+
+        self.assertEqual(self.module.players['the-uuid']['internal']['last_state'], Gst.State.PAUSED)
+        self.assertEqual(self.session.event_call_count('audioplayer.playback.update'), 0)
+
+    def test__send_playback_event_ready_state(self):
+        self.init()
+        player = Mock()
+        player.get_state = Mock(return_value=('dummy', Gst.State.READY, 'dummy'))
+        self.module.players = {
+            'the-uuid': {
+                'uuid': 'the-uuid',
+                'player': None,
+                'pipeline': [],
+                'internal': {
+                    'tags_sent': False,
+                    'to_destroy': False,
+                    'last_state': Gst.State.PAUSED,
+                }
+            }
+        }
+
+        self.module._Audioplayer__send_playback_event('the-uuid', player)
+
+        self.assertEqual(self.module.players['the-uuid']['internal']['last_state'], Gst.State.PAUSED)
+        self.assertEqual(self.session.event_call_count('audioplayer.playback.update'), 0)
+
+    def test__get_audio_metadata(self):
+        self.init()
+        tags = Mock()
+        tags.to_string.return_value = 'all-tags'
+        tags.nth_tag_name.side_effect = [
+            'artist',
+            'album-artist',
+            'album',
+            'title',
+            'genre',
+            'track-number',
+            'datetime',
+            'channel-mode',
+            'minimum-bitrate',
+            'maximum-bitrate',
+            'bitrate',
+        ]
+        tags.get_string.side_effect = [
+            (True, '[artist]'),
+            (True, '[album-artist]'),
+            (True, '[album]'),
+            (True, '[title]'),
+            (True, '[genre]'),
+            (True, '[channel-mode]'),
+        ]
+        tags.get_uint.side_effect = [
+            (True, 2), # track-number
+            (True, 333), # min bitrate
+            (True, 999), # max bitrate
+            (True, 666), # bitrate
+        ]
+        date_time = Mock()
+        date_time.has_year.return_value = True
+        date_time.get_year.return_value = 2021
+        tags.get_date_time.return_value = (True, date_time)
+        tags.n_tags.return_value = 11
+
+        metadata = self.module._Audioplayer__get_audio_metadata(tags)
+        logging.debug('Metadata: %s' % metadata)
+
+        self.assertDictEqual(metadata, {
+            'artist': '[album-artist]',
+            'album': '[album]',
+            'title': '[title]',
+            'genre': '[genre]',
+            'year': 2021,
+            'track': 2,
+            'channels': '[channel-mode]',
+            'bitratemin': 333,
+            'bitratemax': 999,
+            'bitrateavg': 666,
+        })
+
+    @patch('backend.audioplayer.magic.from_file')
+    def test__get_file_audio_format(self, mock_from_file):
+        self.init()
+        mock_from_file.return_value = 'audio/mpeg'
+
+        result = self.module._Audioplayer__get_file_audio_format('/audio/file/path.mp3')
+        logging.debug('Format: %s' % result)
+
+        self.assertEqual(result, 'audio/mpeg')
+
+    @patch('backend.audioplayer.magic.from_file')
+    def test__get_file_audio_format_unknown_format(self, mock_from_file):
+        self.init()
+        mock_from_file.return_value = 'audio/dummy'
+
+        result = self.module._Audioplayer__get_file_audio_format('/audio/file/path.mp3')
+        logging.debug('Format: %s' % result)
+
+        self.assertIsNone(result)
+
+    @patch('backend.audioplayer.magic.from_file')
+    def test__get_file_audio_format_exception(self, mock_from_file):
+        self.init()
+        mock_from_file.side_effect = Exception('Test exception')
+
+        result = self.module._Audioplayer__get_file_audio_format('/audio/file/path.mp3')
+        logging.debug('Format: %s' % result)
+
+        self.assertIsNone(result)
+
+    def test_is_filepath(self):
+        self.init()
+
+        with patch('backend.audioplayer.os.path.exists') as exists_mock:
+            exists_mock.return_value = True
+
+            self.assertTrue(self.module._is_filepath('/dummy/resource'))
+
+        with patch('backend.audioplayer.os.path.exists') as exists_mock:
+            with patch('backend.audioplayer.parse_url') as parse_url_mock:
+                exists_mock.return_value = False
+                result = ParseUrlResult()
+                result.scheme = 'https'
+                parse_url_mock.return_value = result
+            
+                self.assertFalse(self.module._is_filepath('/dummy/resource'))
+
+        with patch('backend.audioplayer.os.path.exists') as exists_mock:
+            with patch('backend.audioplayer.parse_url') as parse_url_mock:
+                exists_mock.return_value = False
+                result = ParseUrlResult()
+                result.scheme = 'dummy'
+                parse_url_mock.return_value = result
+            
+                with self.assertRaises(Exception) as cm:
+                    self.assertFalse(self.module._is_filepath('/dummy/resource'))
+                self.assertEqual(str(cm.exception), 'Resource is invalid (file may not exist)')
+
+    def test_make_track(self):
+        self.init()
+
+        result = self.module._make_track('/dummy/resource', 'audio/dummy')
+
+        self.assertDictEqual(result, {
+            'resource': '/dummy/resource',
+            'audio_format': 'audio/dummy',
+        })
+
+    def test_add_track(self):
+        self.init()
+        self.module.players = {
+            'the-uuid': {
+                'uuid': 'the-uuid',
+                'player': None,
+                'pipeline': [],
+                'playlist': {
+                    'tracks': ['track1'],
+                    'current_index': 0,
+                },
+                'internal': {
+                    'to_destroy': False,
+                },
+            }
+        }
+        track = self.module._make_track('/dummy/resource', 'audio/dummy')
+
+        with patch('backend.audioplayer.os.path.exists') as exists_mock:
+            exists_mock.return_value = True
+        
+            self.module.add_track('the-uuid', '/dummy/resource', 'audio/dummy')
+
+            self.assertDictEqual(self.module.players['the-uuid']['playlist']['tracks'][-1], track)
+
+    def test_add_track_exception(self):
+        self.init()
+        self.module.players = {}
+
+        with self.assertRaises(Exception) as cm:
+            self.module.add_track('the-uuid', '/dummy/resource', 'audio/dummy')
+        self.assertEqual(str(cm.exception), 'Player "the-uuid" does not exists')
+
+
+        self.module.players = {
+            'the-uuid': {
+                'uuid': 'the-uuid',
+                'player': None,
+                'pipeline': [],
+                'internal': {
+                    'to_destroy': False
+                }
+            }
+        }
+        with patch('backend.audioplayer.os.path.exists') as exists_mock:
+            with patch('backend.audioplayer.parse_url') as parse_url_mock:
+                exists_mock.return_value = False
+                result = ParseUrlResult()
+                result.scheme = 'http'
+                parse_url_mock.return_value = result
+            
+                with self.assertRaises(MissingParameter) as cm:
+                    self.module.add_track('the-uuid', '/dummy/resource/url')
+                self.assertEqual(str(cm.exception), 'Url resource must have audio_format specified')
 
 if __name__ == '__main__':
     # coverage run --omit="*/lib/python*/*","test_*" --concurrency=thread test_audioplayer.py; coverage report -m -i

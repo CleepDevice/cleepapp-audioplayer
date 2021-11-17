@@ -340,7 +340,7 @@ class Audioplayer(CleepModule):
                     del message
                     message = player["player"].get_bus().pop()
             except Exception:
-                self.logger.exception("Error processing player messages:")
+                self.logger.exception('Error processing player "%s" messages', player_uuid)
 
     def __process_gstreamer_message(self, player_uuid, player, message):
         """
@@ -427,16 +427,16 @@ class Audioplayer(CleepModule):
             "genre": None,
             "track": None,
             "title": None,
-            "channel": None,
+            "channels": None,
             "bitratemin": None,
             "bitratemax": None,
             "bitrateavg": None,
         }
 
+        self.logger.debug("All tags: %s" % tags.to_string())
         for index in range(tags.n_tags()):
             tag_name = tags.nth_tag_name(index)
-            # self.logger.trace(f" => tag name: {tag_name}")
-            self.logger.debug("All tags: %s", tags.to_string())
+            self.logger.debug(f" => tag name: {tag_name}")
             if tag_name in ("artist", "album-artist"):
                 metadata["artist"] = tags.get_string(tag_name)[1]
             elif tag_name == "album":
@@ -456,7 +456,7 @@ class Audioplayer(CleepModule):
                 if datetrue and datetime.has_year():
                     metadata["year"] = datetime.get_year()
             elif tag_name == "channel-mode":
-                metadata["channel"] = tags.get_string(tag_name)[1]
+                metadata["channels"] = tags.get_string(tag_name)[1]
             elif tag_name == "minimum-bitrate":
                 bitratetrue, bitrate = tags.get_uint(tag_name)
                 if bitratetrue:
@@ -544,7 +544,7 @@ class Audioplayer(CleepModule):
         """
         if player_uuid not in self.players:
             raise CommandError(f'Player "{player_uuid}" does not exists')
-        if Audioplayer._is_filepath(resource) and not audio_format:
+        if not Audioplayer._is_filepath(resource) and not audio_format:
             raise MissingParameter("Url resource must have audio_format specified")
 
         self.logger.info(
