@@ -607,10 +607,10 @@ class Audioplayer(CleepModule):
 
         try:
             self.__play_track(track, player["uuid"], volume)
-        except Exception:
+            return player["uuid"]
+        except Exception as error:
             self.__destroy_player(player)
-
-        return player["uuid"]
+            raise CommandError('Unable to play resource') from error
 
     def __play_track(self, track, player_uuid, volume=None):
         """
@@ -658,10 +658,10 @@ class Audioplayer(CleepModule):
         return next(
             (
                 index
-                for index, track in enumerate(
+                for index, atrack in enumerate(
                     self.players[player_uuid]["playlist"]["tracks"]
                 )
-                if track["resource"] == track["resource"]
+                if atrack["resource"] == track["resource"]
             ),
             0,
         )
