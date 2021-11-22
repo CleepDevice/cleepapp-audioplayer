@@ -773,6 +773,7 @@ class Audioplayer(CleepModule):
         try:
             self.__play_track(next_track, player_uuid)
         except Exception:
+            self.logger.exception('Error playing next track %s', next_track)
             return False
 
         return True
@@ -811,6 +812,9 @@ class Audioplayer(CleepModule):
         Args:
             player_uuid (string): player identifier
 
+        Returns:
+            bool: True if previous track played successfully, False otherwise
+
         Raises:
             CommandError: if command failed
         """
@@ -826,10 +830,7 @@ class Audioplayer(CleepModule):
 
         playlist["current_index"] -= 1
         previous_track = playlist["tracks"][playlist["current_index"]]
-        try:
-            self.__play_track(previous_track, player_uuid)
-        except Exception:
-            return False
+        self.__play_track(previous_track, player_uuid)
 
         return True
 

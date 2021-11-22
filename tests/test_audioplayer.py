@@ -1058,6 +1058,475 @@ class TestAudioplayer(unittest.TestCase):
         index = self.module._get_track_index('the-uuid', track2)
         self.assertEqual(index, 0)
 
+    def test_pause_playback_while_playing(self):
+        self.init()
+        player = Mock()
+        player.get_state.return_value = ('dummy', Gst.State.PLAYING, 'dummy')
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': [track1],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': player,
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+
+        self.module.pause_playback('the-uuid')
+
+        player.get_state.assert_called_with(1)
+        player.set_state.assert_called_with(Gst.State.PAUSED)
+
+    def test_pause_playback_while_paused(self):
+        self.init()
+        player = Mock()
+        player.get_state.return_value = ('dummy', Gst.State.PAUSED, 'dummy')
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': [track1],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': player,
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+
+        self.module.pause_playback('the-uuid')
+
+        player.get_state.assert_called_with(1)
+        player.set_state.assert_called_with(Gst.State.PLAYING)
+
+    def test_pause_playback_invalid_params(self):
+        self.init()
+
+        with self.assertRaises(CommandError) as cm:
+            self.module.pause_playback('dummy')
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exists')
+
+    def test_stop_playback(self):
+        self.init()
+        player = Mock()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': [track1],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': player,
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._destroy_player = Mock()
+
+        self.module.stop_playback('the-uuid')
+
+        player.set_state.assert_called_with(Gst.State.NULL)
+        self.module._destroy_player.assert_called_with(player_data)
+        self.session.assert_event_called_with('audioplayer.playback.update', {
+            'playeruuid': 'the-uuid',
+            'state': Gst.State.NULL,
+        })
+
+    def test_stop_playback_invalid_params(self):
+        self.init()
+
+        with self.assertRaises(CommandError) as cm:
+            self.module.stop_playback('dummy')
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exists')
+
+    def test_play_next_track(self):
+        self.init()
+        player = Mock()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 0,
+                'tracks': [track1, track2],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': player,
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._Audioplayer__play_next_track = Mock(return_value=True)
+
+        result = self.module.play_next_track('the-uuid')
+
+        self.assertTrue(result)
+        self.module._Audioplayer__play_next_track.assert_called_with('the-uuid')
+
+    def test_play_next_track_no_more_track(self):
+        self.init()
+        player = Mock()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': [track1, track2],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': player,
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._Audioplayer__play_next_track = Mock(return_value=True)
+
+        result = self.module.play_next_track('the-uuid')
+
+        self.assertFalse(result)
+        self.module._Audioplayer__play_next_track.assert_not_called()
+
+    def test_play_next_track_error_playing_track(self):
+        self.init()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 0,
+                'tracks': [track1, track2],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._Audioplayer__play_next_track = Mock(return_value=False)
+
+        with self.assertRaises(CommandError) as cm:
+            self.module.play_next_track('the-uuid')
+        self.assertEqual(str(cm.exception), 'Error playing next track')
+
+    def test_play_next_track_invalid_params(self):
+        self.init()
+
+        with self.assertRaises(CommandError) as cm:
+            self.module.play_next_track('dummy')
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exists')
+
+    def test__play_next_track(self):
+        self.init()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 0,
+                'tracks': [track1, track2],
+                'repeat': False,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._Audioplayer__handle_end_of_playlist = Mock()
+        self.module._Audioplayer__play_track = Mock()
+
+        result = self.module._Audioplayer__play_next_track('the-uuid')
+
+        self.assertTrue(result)
+        self.module._Audioplayer__handle_end_of_playlist.assert_not_called()
+        self.module._Audioplayer__play_track.assert_called_with(track2, 'the-uuid')
+        self.assertEqual(player_data['playlist']['current_index'], 1)
+
+    def test__play_next_track_exception(self):
+        self.init()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 0,
+                'tracks': [track1, track2],
+                'repeat': False,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._Audioplayer__handle_end_of_playlist = Mock()
+        self.module._Audioplayer__play_track = Mock(side_effect=Exception('Test exception'))
+
+        result = self.module._Audioplayer__play_next_track('the-uuid')
+
+        self.assertFalse(result)
+        self.module._Audioplayer__handle_end_of_playlist.assert_not_called()
+
+    def test__play_next_track_handle_end_of_playlist(self):
+        self.init()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': [track1, track2],
+                'repeat': False,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+
+        self.module._Audioplayer__handle_end_of_playlist = Mock(return_value=False)
+        result = self.module._Audioplayer__play_next_track('the-uuid')
+        self.assertFalse(result)
+
+        self.module._Audioplayer__handle_end_of_playlist.return_value = True
+        result = self.module._Audioplayer__play_next_track('the-uuid')
+        self.assertTrue(result)
+
+    def test__play_next_track_invalid_params(self):
+        self.init()
+
+        self.assertFalse(self.module._Audioplayer__play_next_track('dummy'))
+
+    def test__handle_end_of_playlist(self):
+        self.init()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': [track1, track2],
+                'repeat': False,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._destroy_player = Mock()
+
+        result = self.module._Audioplayer__handle_end_of_playlist('the-uuid')
+
+        self.assertFalse(result)
+        self.module._destroy_player.assert_called_with(player_data)
+
+    def test__handle_end_of_playlist_repeat_enabled(self):
+        self.init()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': [track1, track2],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._destroy_player = Mock()
+        self.module._Audioplayer__play_track = Mock()
+
+        result = self.module._Audioplayer__handle_end_of_playlist('the-uuid')
+
+        self.assertTrue(result)
+        self.module._destroy_player.assert_not_called()
+        self.module._Audioplayer__play_track.assert_called_with(track1, 'the-uuid')
+
+    def test_play_previous_track(self):
+        self.init()
+        player = Mock()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': [track1, track2],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': player,
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._Audioplayer__play_track = Mock()
+
+        result = self.module.play_previous_track('the-uuid')
+
+        self.assertTrue(result)
+        self.assertEqual(player_data['playlist']['current_index'], 0)
+        self.module._Audioplayer__play_track.assert_called_with(track1, 'the-uuid')
+
+    def test_play_previous_track_first_track(self):
+        self.init()
+        player = Mock()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 0,
+                'tracks': [track1, track2],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': player,
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._Audioplayer__play_track = Mock(return_value=True)
+
+        result = self.module.play_previous_track('the-uuid')
+
+        self.assertFalse(result)
+        self.assertEqual(player_data['playlist']['current_index'], 0)
+        self.module._Audioplayer__play_track.assert_not_called()
+
+    def test_play_previous_track_error_playing_track(self):
+        self.init()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': [track1, track2],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._Audioplayer__play_track = Mock(side_effect=Exception('Test exception'))
+
+        with self.assertRaises(Exception) as cm:
+            self.module.play_previous_track('the-uuid')
+        self.assertEqual(str(cm.exception), 'Test exception')
+
+    def test_play_previous_track_invalid_params(self):
+        self.init()
+
+        with self.assertRaises(CommandError) as cm:
+            self.module.play_previous_track('dummy')
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exists')
+
 
 if __name__ == '__main__':
     # coverage run --omit="*/lib/python*/*","test_*" --concurrency=thread test_audioplayer.py; coverage report -m -i
