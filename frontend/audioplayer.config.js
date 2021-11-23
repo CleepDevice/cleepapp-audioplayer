@@ -20,10 +20,11 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
         self.selectedFormat = 'audio/mpeg';
         self.url = '/root/temp/placebo.mp3';
         self.trackIndex = 0;
-        self.playlist = undefined;
+        self.playlist = {};
         self.selectedPlayerId = undefined;
         self.volume = 100;
         self.repeat = false;
+        self.playerOpened = false;
 
         self.$onInit = function() {
             audioplayerService.refreshPlayers();
@@ -44,10 +45,12 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
 
         self.next = function(playerId) {
             audioplayerService.next(playerId);
+            self.loadPlaylist(playerId);
         };
 
         self.previous = function(playerId) {
             audioplayerService.previous(playerId);
+            self.loadPlaylist(playerId);
         };
 
         self.setVolume = function(playerId) {
@@ -91,7 +94,7 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
         self.loadPlaylist = function(playerId) {
             return audioplayerService.getPlaylist(playerId)
                 .then((response) => {
-                    self.playlist = response.data;
+                    Object.assign(self.playlist, response.data);
                     self.selectedPlayerId = playerId;
                     self.repeat = self.playlist.repeat;
                     self.volume = self.playlist.volume;
@@ -100,7 +103,9 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
 
         self.showPlaylist = function(playerId) {
             self.loadPlaylist(playerId).then(() => {
-                self.openDialog();
+                self.openDialog().then(() => {
+                    self.playerOpened = true;
+                });
             });
         };
 
@@ -108,7 +113,7 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
             return $mdDialog.show({
                 controller: function() { return self; },
                 controllerAs: 'audioplayerCtl',
-                templateUrl: 'playlist.dialog.html',
+                templateUrl: 'player.dialog.html',
                 parent: angular.element(document.body),
                 clickOutsideToClose: false,
                 fullscreen: true,
@@ -117,6 +122,7 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
 
         self.cancelDialog = function() {
             $mdDialog.cancel();
+            self.playerOpened = false;
         };
     };
 

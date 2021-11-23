@@ -13,6 +13,7 @@
         <md-dialog-content class="md-dialog-content" layout-padding>
             <md-list>
 
+                <!-- controls -->
                 <md-subheader class="md-no-sticky" style="background-color: #FFFFFF">Controls</md-subheader>
                 <md-list-item>
                     <md-icon md-svg-icon="chevron-right"></md-icon>
@@ -62,6 +63,7 @@
                     </md-input-container>
                 </md-list-item>
 
+                <!-- add track -->
                 <md-subheader class="md-no-sticky" style="background-color: #FFFFFF">Add track to playlist</md-subheader>
                 <md-list-item>
                     <md-icon md-svg-icon="chevron-right"></md-icon>
@@ -91,6 +93,7 @@
                     </md-input-container>
                 </md-list-item>
 
+                <!-- playlist -->
                 <md-subheader class="md-no-sticky" style="background-color: #FFFFFF">Playlist</md-subheader>
                 <md-list-item ng-repeat="track in audioplayerCtl.playlist.tracks">
                     <md-icon md-svg-icon="music-note" ng-if="audioplayerCtl.playlist.current_index!==$index"></md-icon>
@@ -103,6 +106,7 @@
                         </md-button>
                     </div>
                 </md-list-item>
+
             </md-list>
         </md-dialog-content>
     </form>

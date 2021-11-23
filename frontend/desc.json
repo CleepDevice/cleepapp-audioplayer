@@ -7,7 +7,7 @@
     },
     "config": {
         "js": ["audioplayer.config.js"],
-        "html": ["audioplayer.config.html", "playlist.dialog.html"],
+        "html": ["audioplayer.config.html", "player.dialog.html"],
         "css": []
     }
 }

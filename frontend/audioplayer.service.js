@@ -10,6 +10,7 @@ angular
 function($rootScope, rpcService) {
     var self = this;
     self.players = [];
+    self.metadata = {};
 
     self.refreshPlayers = function() {
         rpcService.sendCommand('get_players', 'audioplayer')
@@ -96,6 +97,10 @@ function($rootScope, rpcService) {
      */
     $rootScope.$on('audioplayer.metadata.update', function(event, uuid, params) {
         console.log('audioplayer.metadata.update', params);
+        if (!self.metadata[params.playeruuid]) {
+            self.metadata[params.playeruuid] = {};
+        }
+        Object.assign(self.metadata[params.playeruuid], params);
     });
 
     $rootScope.$on('audioplayer.playback.update', function(event, uuid, params) {

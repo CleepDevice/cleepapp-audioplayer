@@ -33,13 +33,19 @@
             <md-icon md-svg-icon="chevron-right"></md-icon>
             <p>No player running</p>
         </md-list-item>
-        <md-list-item ng-repeat="player in audioplayerCtl.audioplayerService.players" class="md-2-line">
+        <md-list-item ng-repeat="player in audioplayerCtl.audioplayerService.players track by player.playeruuid" class="md-2-line">
             <md-icon md-svg-icon="play" ng-if="player.state===4" ></md-icon>
             <md-icon md-svg-icon="pause" ng-if="player.state===3"></md-icon>
             <md-icon md-svg-icon="stop" ng-if="player.state!==3 && player.state!==4"></md-icon>
-            <div class="md-list-item-text">
+            <div class="md-list-item-text" ng-if="!audioplayerCtl.audioplayerService.metadata[player.playeruuid]">
                 <h3>{{ player.playback.resource }}</h3>
                 <p>{{ player.playback.audio_format }}</p>
+            </div>
+            <div class="md-list-item-text" ng-if="audioplayerCtl.audioplayerService.metadata[player.playeruuid]">
+                <h3>{{ audioplayerCtl.audioplayerService.metadata[player.playeruuid].title }}</h3>
+                <p>
+                    {{ audioplayerCtl.audioplayerService.metadata[player.playeruuid].artist || 'no artist' }} - {{ audioplayerCtl.audioplayerService.metadata[player.playeruuid].album || 'no album' }}
+                </p>
             </div>
             <md-input-container md-no-float class="md-secondary no-margin" layout="row" layout-align="start center" layout-padding>
                 <md-button ng-click="audioplayerCtl.pause(player.playeruuid)" class="md-raised md-primary">
