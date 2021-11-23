@@ -19,7 +19,7 @@ class ParseUrlResult:
 class TestAudioplayer(unittest.TestCase):
 
     def setUp(self):
-        logging.basicConfig(level=logging.DEBUG, format=u'%(asctime)s %(name)s:%(lineno)d %(levelname)s : %(message)s')
+        logging.basicConfig(level=logging.FATAL, format=u'%(asctime)s %(name)s:%(lineno)d %(levelname)s : %(message)s')
         self.session = session.TestSession(self)
 
     def tearDown(self):
@@ -378,7 +378,7 @@ class TestAudioplayer(unittest.TestCase):
 
         self.module._Audioplayer__process_gstreamer_message.assert_not_called()
 
-    def test__process_players_messages(self):
+    def test__process_players_messages_exception(self):
         self.init()
         player1_mock = Mock()
         player1_mock.get_bus.return_value.pop.side_effect = Exception('Test exception')
@@ -621,6 +621,37 @@ class TestAudioplayer(unittest.TestCase):
             'bitrateavg': 666,
         })
 
+    def test__get_audio_metadata_track_string(self):
+        self.init()
+        tags = Mock()
+        tags.to_string.return_value = 'all-tags'
+        tags.nth_tag_name.side_effect = [
+            'track-number',
+        ]
+        tags.get_string.side_effect = [
+            (True, '3'),
+        ]
+        tags.get_uint.side_effect = [
+            (False, 2), # track-number
+        ]
+        tags.n_tags.return_value = 1
+
+        metadata = self.module._Audioplayer__get_audio_metadata(tags)
+        logging.debug('Metadata: %s' % metadata)
+
+        self.assertDictEqual(metadata, {
+            'artist': None,
+            'album': None,
+            'title': None,
+            'genre': None,
+            'year': None,
+            'track': '3',
+            'channels': None,
+            'bitratemin': None,
+            'bitratemax': None,
+            'bitrateavg': None,
+        })
+
     @patch('backend.audioplayer.magic.from_file')
     def test__get_file_audio_format(self, mock_from_file):
         self.init()
@@ -720,7 +751,7 @@ class TestAudioplayer(unittest.TestCase):
 
         with self.assertRaises(Exception) as cm:
             self.module.add_track('the-uuid', '/dummy/resource', 'audio/dummy')
-        self.assertEqual(str(cm.exception), 'Player "the-uuid" does not exists')
+        self.assertEqual(str(cm.exception), 'Player "the-uuid" does not exist')
 
         self.module.players = {
             'the-uuid': {
@@ -852,7 +883,7 @@ class TestAudioplayer(unittest.TestCase):
 
         with self.assertRaises(CommandError) as cm:
             self.module.remove_track('dummy', 1)
-        self.assertEqual(str(cm.exception), 'Player "dummy" does not exists')
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
     def test_start_playback(self):
         self.init()
@@ -919,7 +950,7 @@ class TestAudioplayer(unittest.TestCase):
 
     @patch('backend.audioplayer.Gst.ElementFactory')
     @patch('backend.audioplayer.Audioplayer._is_filepath')
-    def test__play_track(self, is_filepath_mock, element_factory_mock):
+    def test__play_track_with_file(self, is_filepath_mock, element_factory_mock):
         self.init()
         is_filepath_mock.return_value = True
         player = MagicMock()
@@ -944,6 +975,39 @@ class TestAudioplayer(unittest.TestCase):
         self.module._Audioplayer__play_track(track, 'the-uuid')
         logging.debug('Players: %s' % self.module.players)
 
+        self.module._Audioplayer__get_file_audio_format.assert_called_with('/resource/dummy')
+        player['source'].set_property.assert_called_with('location', '/resource/dummy')
+        player['player'].set_state.assert_called_with(Gst.State.PLAYING)
+        self.assertEqual(player['volume'].call_count, 0)
+
+    @patch('backend.audioplayer.Gst.ElementFactory')
+    @patch('backend.audioplayer.Audioplayer._is_filepath')
+    def test__play_track_with_url(self, is_filepath_mock, element_factory_mock):
+        self.init()
+        is_filepath_mock.return_value = False
+        player = MagicMock()
+        self.module._Audioplayer__prepare_player = Mock(return_value=player)
+        track = self.module._make_track('/resource/dummy', 'audio/mpeg')
+        self.module._Audioplayer__get_file_audio_format = Mock(return_value='audio/mpeg')
+        self.module.players = {
+            'the-uuid': {
+                'uuid': 'the-uuid',
+                'player': None,
+                'pipeline': [],
+                'playlist': {
+                    'tracks': [],
+                    'current_index': 0,
+                },
+                'internal': {
+                    'to_destroy': False,
+                },
+            }
+        }
+
+        self.module._Audioplayer__play_track(track, 'the-uuid')
+        logging.debug('Players: %s' % self.module.players)
+
+        self.module._Audioplayer__get_file_audio_format.assert_not_called()
         player['source'].set_property.assert_called_with('location', '/resource/dummy')
         player['player'].set_state.assert_called_with(Gst.State.PLAYING)
         self.assertEqual(player['volume'].call_count, 0)
@@ -976,6 +1040,34 @@ class TestAudioplayer(unittest.TestCase):
         logging.debug('Players: %s' % self.module.players)
 
         player['volume'].set_property.assert_called_with('volume', 0.66)
+
+    @patch('backend.audioplayer.Gst.ElementFactory')
+    @patch('backend.audioplayer.Audioplayer._is_filepath')
+    def test__play_track_get_audio_format_failed(self, is_filepath_mock, element_factory_mock):
+        self.init()
+        is_filepath_mock.return_value = True
+        player = MagicMock()
+        self.module._Audioplayer__prepare_player = Mock(return_value=player)
+        track = self.module._make_track('/resource/dummy', 'audio/mpeg')
+        self.module._Audioplayer__get_file_audio_format = Mock(return_value=None)
+        self.module.players = {
+            'the-uuid': {
+                'uuid': 'the-uuid',
+                'player': None,
+                'pipeline': [],
+                'playlist': {
+                    'tracks': [],
+                    'current_index': 0,
+                },
+                'internal': {
+                    'to_destroy': False,
+                },
+            }
+        }
+
+        with self.assertRaises(CommandError) as cm:
+            self.module._Audioplayer__play_track(track, 'the-uuid')
+        self.assertEqual(str(cm.exception), 'Audio file not supported')
 
     @patch('backend.audioplayer.Gst.ElementFactory')
     @patch('backend.audioplayer.Audioplayer._is_filepath')
@@ -1123,7 +1215,7 @@ class TestAudioplayer(unittest.TestCase):
 
         with self.assertRaises(CommandError) as cm:
             self.module.pause_playback('dummy')
-        self.assertEqual(str(cm.exception), 'Player "dummy" does not exists')
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
     def test_stop_playback(self):
         self.init()
@@ -1164,7 +1256,7 @@ class TestAudioplayer(unittest.TestCase):
 
         with self.assertRaises(CommandError) as cm:
             self.module.stop_playback('dummy')
-        self.assertEqual(str(cm.exception), 'Player "dummy" does not exists')
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
     def test_play_next_track(self):
         self.init()
@@ -1262,7 +1354,7 @@ class TestAudioplayer(unittest.TestCase):
 
         with self.assertRaises(CommandError) as cm:
             self.module.play_next_track('dummy')
-        self.assertEqual(str(cm.exception), 'Player "dummy" does not exists')
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
     def test__play_next_track(self):
         self.init()
@@ -1525,8 +1617,245 @@ class TestAudioplayer(unittest.TestCase):
 
         with self.assertRaises(CommandError) as cm:
             self.module.play_previous_track('dummy')
-        self.assertEqual(str(cm.exception), 'Player "dummy" does not exists')
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
+    def test_get_players(self):
+        self.init()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': [track1, track2],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': Gst.State.PLAYING,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        
+        players = self.module.get_players()
+        logging.debug('Players: %s', players)
+
+        self.assertListEqual(players, [{
+            'playeruuid': 'the-uuid',
+            'playback': track2,
+            'state': Gst.State.PLAYING,
+            'volume': 55,
+        }])
+
+    def test_get_playlist(self):
+        self.init()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 1,
+                'tracks': [track1, track2],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': Gst.State.PLAYING,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        
+        playlist = self.module.get_playlist('the-uuid')
+        logging.debug('Playlist: %s', playlist)
+
+        self.assertEqual(playlist['current_index'], 1)
+        self.assertListEqual(playlist['tracks'], [track1, track2])
+
+    def test_get_playlist_invalid_params(self):
+        self.init()
+
+        with self.assertRaises(CommandError) as cm:
+            self.module.get_playlist('dummy')
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
+
+    def test_set_volume(self):
+        self.init()
+        volume = Mock()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 0,
+                'tracks': [track1],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': volume,
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': Gst.State.PLAYING,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        
+        self.module.set_volume('the-uuid', 0)
+        self.module.set_volume('the-uuid', 100)
+        self.module.set_volume('the-uuid', 66)
+
+        self.assertEqual(player_data['playlist']['volume'], 66)
+        volume.set_property.assert_called_with('volume', 0.66)
+
+    def test_set_volume_invalid_params(self):
+        self.init()
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 0,
+                'tracks': [{}],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': Gst.State.PLAYING,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+
+        with self.assertRaises(CommandError) as cm:
+            self.module.set_volume('dummy', 50)
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
+
+        with self.assertRaises(InvalidParameter) as cm:
+            self.module.set_volume('the-uuid', -1)
+        self.assertEqual(str(cm.exception), 'Parameter "volume" is invalid')
+
+        with self.assertRaises(InvalidParameter) as cm:
+            self.module.set_volume('the-uuid', 101)
+        self.assertEqual(str(cm.exception), 'Parameter "volume" is invalid')
+
+    def test_set_repeat(self):
+        self.init()
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 0,
+                'tracks': [{}],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': Gst.State.PLAYING,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+
+        self.module.set_repeat('the-uuid', False)
+        self.assertFalse(player_data['playlist']['repeat'])
+
+        self.module.set_repeat('the-uuid', True)
+        self.assertTrue(player_data['playlist']['repeat'])
+
+    def test_set_repeat_invalid_params(self):
+        self.init()
+
+        with self.assertRaises(CommandError) as cm:
+            self.module.set_repeat('dummy', True)
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
+
+    def test_shuffle_playlist_first_track_playing(self):
+        self.init()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        track3 = self.module._make_track('/resource/track3', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 0,
+                'tracks': [track1, track2, track3],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': Gst.State.PLAYING,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+
+        self.module.shuffle_playlist('the-uuid')
+
+        self.assertDictEqual(player_data['playlist']['tracks'][0], track1)
+        self.assertEqual(player_data['playlist']['current_index'], 0)
+
+    def test_shuffle_playlist_last_track_playing(self):
+        self.init()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        track3 = self.module._make_track('/resource/track3', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'current_index': 2,
+                'tracks': [track1, track2, track3],
+                'repeat': True,
+                'volume': 55,
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': Gst.State.PLAYING,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+
+        self.module.shuffle_playlist('the-uuid')
+
+        self.assertDictEqual(player_data['playlist']['tracks'][0], track3)
+        self.assertEqual(player_data['playlist']['current_index'], 0)
+
+    def test_shuffle_playlist_invalid_params(self):
+        self.init()
+
+        with self.assertRaises(CommandError) as cm:
+            self.module.shuffle_playlist('dummy')
+        self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
 if __name__ == '__main__':
     # coverage run --omit="*/lib/python*/*","test_*" --concurrency=thread test_audioplayer.py; coverage report -m -i
