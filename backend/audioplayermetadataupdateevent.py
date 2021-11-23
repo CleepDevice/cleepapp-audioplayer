@@ -18,7 +18,7 @@ class AudioplayerMetadataUpdateEvent(Event):
         "genre",
         "track",
         "title",
-        "channel",
+        "channels",
         "bitratemin",
         "bitratemax",
         "bitrateavg",

@@ -124,7 +124,6 @@ class Audioplayer(CleepModule):
         self.players = {}
         self.event_metadata_update = self._get_event("audioplayer.metadata.update")
         self.event_playback_update = self._get_event("audioplayer.playback.update")
-        # self.event_duration_update = self._get_event('audioplayer.duration.update')
 
     def _configure(self):
         """
@@ -193,6 +192,7 @@ class Audioplayer(CleepModule):
             "uuid": self._get_unique_id(),
             "playlist": {
                 "current_index": None,
+                "current_duration": None,
                 "tracks": [],
                 "repeat": False,
                 "volume": 0,
@@ -374,20 +374,15 @@ class Audioplayer(CleepModule):
             and not self.players[player_uuid]["internal"]["tags_sent"]
         ):
             tags = message.parse_tag()
-            metadata = self.__get_audio_metadata(tags)
-            self.logger.debug('Player "%s" TAG: %s', player_uuid, metadata)
-            metadata.update({"playeruuid": player_uuid})
-            self.event_metadata_update.send(metadata)
-            self.players[player_uuid]["internal"]["tags_sent"] = True
+            complete, metadata = self.__get_audio_metadata(tags)
+            self.logger.info('Player "%s" TAG [complete=%s]: %s', player_uuid, complete, metadata)
+            if complete:
+                metadata.update({"playeruuid": player_uuid})
+                self.event_metadata_update.send(metadata)
+                self.players[player_uuid]["internal"]["tags_sent"] = complete
         elif message_type == Gst.MessageType.DURATION_CHANGED:
-            durationtrue, duration = player.query_duration(Gst.Format.TIME)
-            if durationtrue:
-                duration = int(duration / 1000000000)
-                self.logger.debug(
-                    'Player "%s" DURATION_CHANGED: %s seconds', player_uuid, duration
-                )
-                # TODO send another event
-                # self.__send_playback_event(player_uuid, player, duration)
+            self.logger.info('Player "%s" DURATION_CHANGED', player_uuid)
+            self.__send_playback_event(player_uuid, player)
 
     def __send_playback_event(self, player_uuid, player):
         """
@@ -397,18 +392,26 @@ class Audioplayer(CleepModule):
             player_uuid (string): player identifier
             player (Gst.Pipeline): player
         """
+        # state
         _, current_state, _ = player.get_state(1)
         if current_state in (
             self.players[player_uuid]["internal"]["last_state"],
             Gst.State.READY,
         ):
             return
-
         self.players[player_uuid]["internal"]["last_state"] = current_state
+
+        # duration
+        duration_true, duration = player.query_duration(Gst.Format.TIME)
+        duration = int(duration / 1000000000) if duration_true else None
+        if duration:
+            self.players[player_uuid]["playlist"]["current_duration"] = duration
+
         self.event_playback_update.send(
             {
                 "playeruuid": player_uuid,
                 "state": current_state,
+                "duration": duration,
             }
         )
 
@@ -420,7 +423,13 @@ class Audioplayer(CleepModule):
             tags (Gst.TagList): tag list
 
         Returns:
-            dict: list of tags in usable format
+            tuple: audio metadata::
+
+            (
+                boolean: metadata is complete
+                dict: list of tags in usable format
+            )
+
         """
         metadata = {
             "album": None,
@@ -435,7 +444,7 @@ class Audioplayer(CleepModule):
             "bitrateavg": None,
         }
 
-        self.logger.debug("All tags: %s" % tags.to_string())
+        self.logger.trace("All tags: %s" % tags.to_string())
         for index in range(tags.n_tags()):
             tag_name = tags.nth_tag_name(index)
             self.logger.debug(f" => tag name: {tag_name}")
@@ -472,7 +481,10 @@ class Audioplayer(CleepModule):
                 if bitratetrue:
                     metadata["bitrateavg"] = bitrate
 
-        return metadata
+        # metadata_complete = { key:value for key,value in metadata.items() if value is not None}
+
+        # return len(metadata_complete.keys()) >= 4 , metadata
+        return metadata["bitrateavg"] is not None, metadata
 
     def __get_file_audio_format(self, filepath):
         """
@@ -636,6 +648,7 @@ class Audioplayer(CleepModule):
         try:
             # configure player
             player["source"].set_property("location", track["resource"])
+            volume = volume or self.players[player_uuid]["playlist"]["volume"]
             if volume is not None:
                 player["volume"].set_property("volume", float(volume / 100.0))
 
@@ -740,7 +753,7 @@ class Audioplayer(CleepModule):
             raise CommandError(f'Player "{player_uuid}" does not exist')
 
         playlist = self.players[player_uuid]["playlist"]
-        if playlist["current_index"] + 1 >= len(playlist["tracks"]):
+        if playlist["current_index"] + 1 >= len(playlist["tracks"]) and not playlist["repeat"]:
             self.logger.debug(
                 'Player "%s" is already playing last playlist track', player_uuid
             )
@@ -768,6 +781,7 @@ class Audioplayer(CleepModule):
 
         # update playlist
         playlist["current_index"] += 1
+        playlist["current_duration"] = None
         next_track = playlist["tracks"][playlist["current_index"]]
         self.logger.debug(
             'Found next track to play on player "%s": %s', player_uuid, next_track
@@ -794,6 +808,7 @@ class Audioplayer(CleepModule):
         if playlist["repeat"]:
             # restart playlist
             playlist["current_index"] = 0
+            playlist["current_duration"] = None
             track = playlist["tracks"][0]
             self.__play_track(track, player_uuid)
             self.logger.debug('Player "%s" restarts playlist', player_uuid)
@@ -831,6 +846,7 @@ class Audioplayer(CleepModule):
             return False
 
         playlist["current_index"] -= 1
+        playlist["current_duration"] = None
         previous_track = playlist["tracks"][playlist["current_index"]]
         self.__play_track(previous_track, player_uuid)
 
@@ -861,6 +877,7 @@ class Audioplayer(CleepModule):
                 ],
                 "state": player["internal"]["last_state"],
                 "volume": player["playlist"]["volume"],
+                "track_duration": player["playlist"]["current_duration"],
             }
             for player in self.players.values()
         ]
