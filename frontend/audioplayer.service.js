@@ -10,12 +10,15 @@ angular
 function($rootScope, rpcService) {
     var self = this;
     self.players = [];
-    self.metadata = {};
+    self.playlist = {};
+    self.playlistPlayerId = null;
 
     self.refreshPlayers = function() {
-        rpcService.sendCommand('get_players', 'audioplayer')
+        return rpcService.sendCommand('get_players', 'audioplayer')
             .then((response) => {
+                if (response.error) return;
                 self.players = response.data;
+                return response;
             });
     };
 
@@ -73,7 +76,13 @@ function($rootScope, rpcService) {
     self.getPlaylist = function(playerId) {
         return rpcService.sendCommand('get_playlist', 'audioplayer', {
             player_uuid: playerId,
-        });
+        })
+            .then((response) => {
+                if (response.error) return;
+                self.playlistPlayerId = playerId;
+                Object.assign(self.playlist, response.data);
+                return response;
+            });
     };
 
     self.addTrack = function(playerId, resource, audioFormat, trackIndex) {
@@ -95,16 +104,43 @@ function($rootScope, rpcService) {
     /**
      * Catch events
      */
-    $rootScope.$on('audioplayer.metadata.update', function(event, uuid, params) {
-        console.log('audioplayer.metadata.update', params);
-        if (!self.metadata[params.playeruuid]) {
-            self.metadata[params.playeruuid] = {};
-        }
-        Object.assign(self.metadata[params.playeruuid], params);
-    });
-
     $rootScope.$on('audioplayer.playback.update', function(event, uuid, params) {
-        console.log('audioplayer.playback.update', params);
-        self.refreshPlayers();
+        // update playlist
+        if (Object.keys(self.playlist).length) {
+            self.playlist.index = params.index;
+        }
+
+        // delete non running player
+        if (params.state === 1) {
+            for (var i=0; i<self.players.length; i++) {
+                if (self.players[i].playeruuid === params.playeruuid) {
+                    self.players.splice(i, 1);
+                    // clear playlist
+                    if (params.playeruuid === self.playlistPlayerId) {
+                        self.playlistPlayerId = null;
+                        Object.keys(self.playlist).forEach(key => {
+                            delete self.playlist[key];
+                        });
+                    }
+                    break;
+                }
+            }
+            return;
+        }
+
+        // update existing player
+        let found = false;
+        for (const player of self.players) {
+            if (player.playeruuid === params.playeruuid) {
+                Object.assign(player, params);
+                found = true;
+                break;
+            }
+        }
+
+        // add new player
+        if (!found) {
+            self.players.push(params);
+        }
     });
 }]);

@@ -10,7 +10,7 @@ class AudioplayerPlaybackUpdateEvent(Event):
     """
 
     EVENT_NAME = "audioplayer.playback.update"
-    EVENT_PARAMS = ["playeruuid", "state", "duration"]
+    EVENT_PARAMS = ["playeruuid", "state", "duration", "track", "metadata", "index"]
 
     def __init__(self, params):
         """

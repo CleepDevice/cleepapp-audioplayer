@@ -8,7 +8,7 @@ angular
 .directive('audioplayerConfigComponent', ['$rootScope', 'cleepService', 'toastService', 'audioplayerService', '$mdDialog',
 function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) {
 
-    var audioplayerConfigController = function() {
+    var audioplayerConfigController = function($scope) {
         var self = this;
         self.audioplayerService = audioplayerService;
         self.formats = [
@@ -18,13 +18,12 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
             { label: 'flac', value: 'audio/flac' },
         ];
         self.selectedFormat = 'audio/mpeg';
-        self.url = '/root/temp/placebo.mp3';
+        self.url = '';
         self.trackIndex = 0;
-        self.playlist = {};
         self.selectedPlayerId = undefined;
         self.volume = 100;
         self.repeat = false;
-        self.playerOpened = false;
+        self.playerIndex = null;
 
         self.$onInit = function() {
             audioplayerService.refreshPlayers();
@@ -45,12 +44,10 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
 
         self.next = function(playerId) {
             audioplayerService.next(playerId);
-            self.loadPlaylist(playerId);
         };
 
         self.previous = function(playerId) {
             audioplayerService.previous(playerId);
-            self.loadPlaylist(playerId);
         };
 
         self.setVolume = function(playerId) {
@@ -94,18 +91,16 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
         self.loadPlaylist = function(playerId) {
             return audioplayerService.getPlaylist(playerId)
                 .then((response) => {
-                    Object.assign(self.playlist, response.data);
                     self.selectedPlayerId = playerId;
-                    self.repeat = self.playlist.repeat;
-                    self.volume = self.playlist.volume;
+                    self.repeat = response.data.repeat;
+                    self.volume = response.data.volume;
                 });
         };
 
-        self.showPlaylist = function(playerId) {
+        self.showPlaylist = function(playerId, playerIndex) {
             self.loadPlaylist(playerId).then(() => {
-                self.openDialog().then(() => {
-                    self.playerOpened = true;
-                });
+                self.playerIndex = playerIndex;
+                self.openDialog();
             });
         };
 
@@ -122,8 +117,16 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
 
         self.cancelDialog = function() {
             $mdDialog.cancel();
-            self.playerOpened = false;
         };
+
+        $scope.$watchCollection(
+            () => audioplayerService.playlist,
+            (playlist) => {
+                if (!Object.keys(audioplayerService.playlist).length) {
+                    $mdDialog.cancel();
+                }
+            }
+        );
     };
 
     return {

@@ -6,7 +6,7 @@
         <md-list-item>
             <!-- generic cleep icon, use it as default line icon -->
             <md-icon md-svg-icon="chevron-right"></md-icon>
-            <p>Play stream</p>
+            <p>Play track</p>
             <md-input-container md-no-float class="md-secondary no-margin" layout="row" layout-align="start center" layout-padding>
                 <div class="no-md-error">
                     <input ng-model="audioplayerCtl.url" placeholder="Stream url" aria-label="Stream url" class="no-margin">
@@ -37,14 +37,14 @@
             <md-icon md-svg-icon="play" ng-if="player.state===4" ></md-icon>
             <md-icon md-svg-icon="pause" ng-if="player.state===3"></md-icon>
             <md-icon md-svg-icon="stop" ng-if="player.state!==3 && player.state!==4"></md-icon>
-            <div class="md-list-item-text" ng-if="!audioplayerCtl.audioplayerService.metadata[player.playeruuid]">
+            <div class="md-list-item-text" ng-if="!player.metadata">
                 <h3>{{ player.playback.resource }}</h3>
                 <p>{{ player.playback.audio_format }}</p>
             </div>
-            <div class="md-list-item-text" ng-if="audioplayerCtl.audioplayerService.metadata[player.playeruuid]">
-                <h3>{{ audioplayerCtl.audioplayerService.metadata[player.playeruuid].title }}</h3>
+            <div class="md-list-item-text" ng-if="player.metadata">
+                <h3>{{ player.metadata.title }}</h3>
                 <p>
-                    {{ audioplayerCtl.audioplayerService.metadata[player.playeruuid].artist || 'no artist' }} - {{ audioplayerCtl.audioplayerService.metadata[player.playeruuid].album || 'no album' }}
+                    {{ player.metadata.artist || 'no artist' }} - {{ player.metadata.album || 'no album' }}
                 </p>
             </div>
             <md-input-container md-no-float class="md-secondary no-margin" layout="row" layout-align="start center" layout-padding>
@@ -56,7 +56,7 @@
                     <md-tooltip>Stop playback</md-tooltip>
                     <md-icon md-svg-icon="stop"></md-icon>
                 </md-button>
-                <md-button ng-click="audioplayerCtl.showPlaylist(player.playeruuid)" class="md-raised md-primary">
+                <md-button ng-click="audioplayerCtl.showPlaylist(player.playeruuid, $index)" class="md-raised md-primary">
                     <md-tooltip>Show player</md-tooltip>
                     <md-icon md-svg-icon="music-circle"></md-icon>
                 </md-button>

@@ -1,4 +1,4 @@
-<md-dialog aria-label="Add sensor dialog" flex="50">
+<md-dialog aria-label="Add sensor dialog" flex="75">
     <form ng-cloak>
         <md-toolbar>
             <div class="md-toolbar-tools">
@@ -67,7 +67,7 @@
                 <md-subheader class="md-no-sticky" style="background-color: #FFFFFF">Add track to playlist</md-subheader>
                 <md-list-item>
                     <md-icon md-svg-icon="chevron-right"></md-icon>
-                    <p>Add stream</p>
+                    <p>Add track</p>
                     <md-input-container md-no-float class="md-secondary no-margin" layout="row" layout-align="start center" layout-padding>
                         <div class="no-md-error">
                             <input ng-model="audioplayerCtl.url" placeholder="Stream url" aria-label="Stream url" class="no-margin">
@@ -95,10 +95,19 @@
 
                 <!-- playlist -->
                 <md-subheader class="md-no-sticky" style="background-color: #FFFFFF">Playlist</md-subheader>
-                <md-list-item ng-repeat="track in audioplayerCtl.playlist.tracks">
-                    <md-icon md-svg-icon="music-note" ng-if="audioplayerCtl.playlist.current_index!==$index"></md-icon>
-                    <md-icon md-svg-icon="play" ng-if="audioplayerCtl.playlist.current_index===$index"></md-icon>
-                    <p> {{ track.resource }} ({{ track.audio_format }})</p>
+                <md-list-item ng-repeat="track in audioplayerCtl.audioplayerService.playlist.tracks" class="md-2-line">
+                    <md-icon md-svg-icon="music-note" ng-if="audioplayerCtl.audioplayerService.playlist.index!==$index"></md-icon>
+                    <md-icon md-svg-icon="play" ng-if="audioplayerCtl.audioplayerService.playlist.index===$index"></md-icon>
+                    <div class="md-list-item-text" ng-if="audioplayerCtl.audioplayerService.playlist.index!==$index || !audioplayerCtl.audioplayerService.players[audioplayerCtl.playerIndex].metadata">
+                        <h3>{{ track.resource }}</h3>
+                        <p>{{ track.audio_format }}</p>
+                    </div>
+                    <div class="md-list-item-text" ng-if="audioplayerCtl.audioplayerService.playlist.index===$index && audioplayerCtl.audioplayerService.players[audioplayerCtl.playerIndex].metadata">
+                        <h3>{{ audioplayerCtl.audioplayerService.players[audioplayerCtl.playerIndex].metadata.title }}</h3>
+                        <p>
+                            {{ audioplayerCtl.audioplayerService.players[audioplayerCtl.playerIndex].metadata.artist || 'no artist' }} - {{ audioplayerCtl.audioplayerService.players[audioplayerCtl.playerIndex].metadata.album || 'no album' }}
+                        </p>
+                    </div>
                     <div class="md-secondary">
                         <md-button class="md-raised md-primary" ng-click="audioplayerCtl.removeTrack(audioplayerCtl.selectedPlayerId, $index)">
                             <md-tooltip>Remove track from playlist</md-tooltip>
