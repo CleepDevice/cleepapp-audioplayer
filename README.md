@@ -1,4 +1,4 @@
-# Audioplayer
+# Audioplayer [![Coverage Status](https://coveralls.io/repos/github/tangb/cleepapp-audioplayer/badge.svg?branch=master)](https://coveralls.io/github/tangb/cleepapp-audioplayer?branch=master)
 
 This application implements a generic audio player to allow your device to play stream or local files.
 
