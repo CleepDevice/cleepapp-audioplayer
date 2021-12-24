@@ -627,6 +627,34 @@ class Audioplayer(CleepModule):
 
         return True
 
+    def add_tracks(self, player_uuid, tracks):
+        """
+        Add multiple tracks at once
+
+        Args:
+            tracks (list): list of tracks::
+
+                [
+                    {
+                        resource (string): local filepath or url
+                        audio_format (string): audio format (mime). Mandatory if resource is an url, can be None if local file.
+                    },
+                    ...
+                ]
+
+        Raises:
+            CommandError: if player does not exist
+            MissingParameter: if parameters are missing
+            InvalidParameter: if command parameters are invalid
+        """
+        self._check_parameters([
+            {'name': tracks, 'value': tracks, 'type': dict}
+        ])
+
+        for track in tracks:
+            if not self.add_track(player_uuid, track['resource'], track['audio_format']):
+                break
+
     def remove_track(self, player_uuid, track_index):
         """
         Remove track from player playlist
