@@ -648,7 +648,8 @@ class Audioplayer(CleepModule):
             InvalidParameter: if command parameters are invalid
         """
         self._check_parameters([
-            {'name': tracks, 'value': tracks, 'type': dict}
+            {'name': 'player_uuid', 'value': player_uuid, 'type': str, 'validator': lambda v: v in self.players},
+            {'name': 'tracks', 'value': tracks, 'type': list}
         ])
 
         for track in tracks:
@@ -677,7 +678,7 @@ class Audioplayer(CleepModule):
             'Player "%s" has track removed: %s', player_uuid, removed_track
         )
 
-    def start_playback(self, resource, audio_format=None, volume=100):
+    def start_playback(self, resource, audio_format=None, volume=100, paused=False):
         """
         Create a player and start playing specified resource
 
@@ -685,6 +686,7 @@ class Audioplayer(CleepModule):
             resource (string): local filepath or url
             audio_format (string): audio format (mime). Mandatory if resource is an url
             volume (int): player volume (default 100)
+            paused (bool): start playback paused. Useful to create player instance in silently
 
         Returns:
             string: player identifier
@@ -697,19 +699,22 @@ class Audioplayer(CleepModule):
         self.players[player["uuid"]] = player
 
         try:
-            self.__play_track(track, player["uuid"], volume)
+            self.__play_track(track, player["uuid"], volume, paused)
             return player["uuid"]
         except Exception as error:
+            self.logger.exception('Unable to play resource %s', resource)
             self.__destroy_player(player)
             raise CommandError("Unable to play resource") from error
 
-    def __play_track(self, track, player_uuid, volume=None):
+    def __play_track(self, track, player_uuid, volume=None, paused=False):
         """
         Play audio stream to
 
         Args:
+            track (dict): track object
             player_uuid (string): player identifier
             volume (int): player volume
+            paused (bool): start playback paused
         """
         # prepare player
         if Audioplayer._is_filepath(track["resource"]):
@@ -730,8 +735,9 @@ class Audioplayer(CleepModule):
                 player["volume"].set_property("volume", float(volume / 100.0))
 
             # start playback
-            player["player"].set_state(Gst.State.PLAYING)
-            self.logger.info('Player "%s" is playing %s', player_uuid, track)
+            state = Gst.State.PAUSED if paused else Gst.State.PLAYING
+            player["player"].set_state(state)
+            self.logger.info('Player "%s" is playing %s (paused %s)', player_uuid, track, paused)
         except Exception as error:
             self.logger.exception("Error playing track %s with %s", track, player_uuid)
             raise error
