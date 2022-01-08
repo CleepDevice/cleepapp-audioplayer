@@ -8,7 +8,7 @@ gi.require_version("Gst", "1.0")
 from gi.repository import Gst
 import magic
 from urllib3.util import parse_url
-from cleep.exception import MissingParameter, InvalidParameter, CommandError
+from cleep.exception import MissingParameter, InvalidParameter, CommandError, CommandInfo
 from cleep.core import CleepModule
 from cleep.common import CATEGORIES
 
@@ -192,6 +192,7 @@ class Audioplayer(CleepModule):
                 "duration": None,
                 "tracks": [],
                 "repeat": False,
+                "shuffle": False,
                 "volume": 0,
                 "metadata": None,
             },
@@ -597,8 +598,12 @@ class Audioplayer(CleepModule):
             CommandError: if player does not exist
             MissingParameter: if parameters are missing
         """
-        if player_uuid not in self.players:
-            raise CommandError(f'Player "{player_uuid}" does not exist')
+        self._check_parameters([
+            {'name': 'player_uuid', 'value': player_uuid, 'type': str, 'validator': lambda v: v in self.players, 'message': f'Player "{player_uuid}" does not exist' },
+            {'name': 'resource', 'value': resource, 'type': str},
+            {'name': 'audio_format', 'value': audio_format, 'type': str, 'none': True, 'validator': lambda v: v in self.AUDIO_PIPELINE_ELEMENTS.keys(), 'message': f'Audio format "{audio_format}" is not supported'},
+            {'name': 'track_number', 'value': track_index, 'type': int, 'none': True},
+        ])
         if not Audioplayer._is_filepath(resource) and not audio_format:
             raise MissingParameter("Url resource must have audio_format specified")
 
@@ -648,13 +653,12 @@ class Audioplayer(CleepModule):
             InvalidParameter: if command parameters are invalid
         """
         self._check_parameters([
-            {'name': 'player_uuid', 'value': player_uuid, 'type': str, 'validator': lambda v: v in self.players},
             {'name': 'tracks', 'value': tracks, 'type': list}
         ])
 
         for track in tracks:
             if not self.add_track(player_uuid, track['resource'], track['audio_format']):
-                break
+                raise CommandInfo('All tracks were not added (playlist limit reached)')
 
     def remove_track(self, player_uuid, track_index):
         """
@@ -890,6 +894,8 @@ class Audioplayer(CleepModule):
         playlist = self.players[player_uuid]["playlist"]
         if playlist["repeat"]:
             # restart playlist
+            if playlist["shuffle"]:
+                self.shuffle_playlist(player_uuid)
             playlist["index"] = 0
             playlist["duration"] = None
             track = playlist["tracks"][0]
@@ -999,13 +1005,14 @@ class Audioplayer(CleepModule):
         )
         self.players[player_uuid]["playlist"]["volume"] = volume
 
-    def set_repeat(self, player_uuid, repeat):
+    def set_repeat(self, player_uuid, repeat, shuffle=False):
         """
         Repeat playlist when end of it is reached
 
         Args:
             player_uuid (string): player identifier
             repeat (boolean): True to repeat playlist, False otherwise
+            shuffle (boolean): True to shuffle playlist when end is reached (default False)
 
         Raises:
             CommandError: if player does not exist
@@ -1014,6 +1021,7 @@ class Audioplayer(CleepModule):
             raise CommandError(f'Player "{player_uuid}" does not exist')
 
         self.players[player_uuid]["playlist"]["repeat"] = repeat
+        self.players[player_uuid]["playlist"]["shuffle"] = shuffle
 
     def shuffle_playlist(self, player_uuid):
         """

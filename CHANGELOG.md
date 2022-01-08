@@ -4,7 +4,8 @@
 
 ### Added
 
-* Add paused param to start_playback command to allow to create player silently
+* Create player silently (do not start music fater player created)
+* Add shuffle playlist option after playlist repeated
 
 ### Fixed
 

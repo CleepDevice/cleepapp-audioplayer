@@ -7,7 +7,7 @@ sys.path.append('../')
 from backend.audioplayer import Audioplayer
 from backend.audioplayer import Gst
 from backend.audioplayerplaybackupdateevent import AudioplayerPlaybackUpdateEvent
-from cleep.exception import InvalidParameter, MissingParameter, CommandError, Unauthorized
+from cleep.exception import InvalidParameter, MissingParameter, CommandError, Unauthorized, CommandInfo
 from cleep.libs.tests import session
 from mock import Mock, patch, MagicMock
 
@@ -84,6 +84,7 @@ class TestAudioplayer(unittest.TestCase):
                 "index": None,
                 "tracks": [], 
                 "repeat": False,
+                "shuffle": False,
                 "volume": 0,
                 "metadata": None,
                 "duration": None,
@@ -929,12 +930,12 @@ class TestAudioplayer(unittest.TestCase):
                 },
             }
         }
-        track = self.module._make_track('/dummy/resource', 'audio/dummy')
+        track = self.module._make_track('/dummy/resource', 'audio/mpeg')
 
         with patch('backend.audioplayer.os.path.exists') as exists_mock:
             exists_mock.return_value = True
         
-            self.module.add_track('the-uuid', '/dummy/resource', 'audio/dummy')
+            self.module.add_track('the-uuid', '/dummy/resource', 'audio/mpeg')
 
             self.assertDictEqual(self.module.players['the-uuid']['playlist']['tracks'][-1], track)
 
@@ -954,16 +955,15 @@ class TestAudioplayer(unittest.TestCase):
                 },
             }
         }
-        track = self.module._make_track('/dummy/resource', 'audio/dummy')
         self.module.MAX_PLAYLIST_TRACKS = 3
 
         with patch('backend.audioplayer.os.path.exists') as exists_mock:
             exists_mock.return_value = True
         
-            self.assertTrue(self.module.add_track('the-uuid', '/dummy/resource', 'audio/dummy'))
-            self.assertTrue(self.module.add_track('the-uuid', '/dummy/resource', 'audio/dummy'))
-            self.assertTrue(self.module.add_track('the-uuid', '/dummy/resource', 'audio/dummy'))
-            self.assertFalse(self.module.add_track('the-uuid', '/dummy/resource', 'audio/dummy'))
+            self.assertTrue(self.module.add_track('the-uuid', '/dummy/resource', 'audio/mpeg'))
+            self.assertTrue(self.module.add_track('the-uuid', '/dummy/resource', 'audio/mpeg'))
+            self.assertTrue(self.module.add_track('the-uuid', '/dummy/resource', 'audio/mpeg'))
+            self.assertFalse(self.module.add_track('the-uuid', '/dummy/resource', 'audio/mpeg'))
 
     def test_add_track_exception(self):
         self.init()
@@ -993,6 +993,56 @@ class TestAudioplayer(unittest.TestCase):
                 with self.assertRaises(MissingParameter) as cm:
                     self.module.add_track('the-uuid', '/dummy/resource/url')
                 self.assertEqual(str(cm.exception), 'Url resource must have audio_format specified')
+        
+                with self.assertRaises(Exception) as cm:
+                    self.module.add_track('the-uuid', '/dummy/resource', 'audio/dummy')
+                self.assertEqual(str(cm.exception), 'Audio format "audio/dummy" is not supported')
+
+    def test_add_tracks(self):
+        self.init()
+        track = self.module._make_track('/dummy/resource', 'audio/dummy')
+        self.module.players = {
+            'the-uuid': {
+                'uuid': 'the-uuid',
+                'player': None,
+                'pipeline': [],
+                'playlist': {
+                    'tracks': [track],
+                    'index': 0,
+                },
+                'internal': {
+                    'to_destroy': False,
+                },
+            }
+        }
+        self.module.add_track = Mock(return_value=True)
+        
+        self.module.add_tracks('the-uuid', [track, track, track])
+
+        self.assertEqual(self.module.add_track.call_count, 3)
+
+    def test_add_tracks_playlist_limit_reached(self):
+        self.init()
+        track = self.module._make_track('/dummy/resource', 'audio/dummy')
+        self.module.players = {
+            'the-uuid': {
+                'uuid': 'the-uuid',
+                'player': None,
+                'pipeline': [],
+                'playlist': {
+                    'tracks': [track],
+                    'index': 0,
+                },
+                'internal': {
+                    'to_destroy': False,
+                },
+            }
+        }
+        self.module.add_track = Mock(side_effect=[True, True, False])
+        
+        with self.assertRaises(CommandInfo) as cm:
+            self.module.add_tracks('the-uuid', [track, track, track, track])
+        self.assertEqual(str(cm.exception), 'All tracks were not added (playlist limit reached)')
 
     def test_remove_track_middle(self):
         self.init()
@@ -1133,7 +1183,7 @@ class TestAudioplayer(unittest.TestCase):
         result = self.module.start_playback('/resource/dummy')
 
         self.module._Audioplayer__create_player.assert_called()
-        self.module._Audioplayer__play_track.assert_called_with({'resource':'/resource/dummy', 'audio_format': None}, 'the-uuid', 100)
+        self.module._Audioplayer__play_track.assert_called_with({'resource':'/resource/dummy', 'audio_format': None}, 'the-uuid', 100, False)
         self.assertEqual(result, player_data['uuid'])
         self.module._Audioplayer__destroy_player.assert_not_called()
 
@@ -1167,7 +1217,7 @@ class TestAudioplayer(unittest.TestCase):
         self.assertEqual(str(cm.exception), 'Unable to play resource')
 
         self.module._Audioplayer__create_player.assert_called()
-        self.module._Audioplayer__play_track.assert_called_with({'resource':'/resource/dummy', 'audio_format': None}, 'the-uuid', 100)
+        self.module._Audioplayer__play_track.assert_called_with({'resource':'/resource/dummy', 'audio_format': None}, 'the-uuid', 100, False)
         self.module._Audioplayer__destroy_player.assert_called_with(player_data)
 
     @patch('backend.audioplayer.Gst.ElementFactory')
@@ -1765,6 +1815,7 @@ class TestAudioplayer(unittest.TestCase):
                 'index': 1,
                 'tracks': [track1, track2],
                 'repeat': True,
+                'shuffle': False,
                 'volume': 55,
                 'metadata': {},
             },
@@ -1781,12 +1832,50 @@ class TestAudioplayer(unittest.TestCase):
         self.module.players = {'the-uuid': player_data}
         self.module._destroy_player = Mock()
         self.module._Audioplayer__play_track = Mock()
+        self.module.shuffle_playlist = Mock()
 
         result = self.module._Audioplayer__handle_end_of_playlist('the-uuid')
 
         self.assertTrue(result)
         self.module._destroy_player.assert_not_called()
         self.module._Audioplayer__play_track.assert_called_with(track1, 'the-uuid')
+        self.module.shuffle_playlist.assert_not_called()
+
+    def test__handle_end_of_playlist_shuffle_enabled(self):
+        self.init()
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        track2 = self.module._make_track('/resource/track2', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'index': 1,
+                'tracks': [track1, track2],
+                'repeat': True,
+                'shuffle': True,
+                'volume': 55,
+                'metadata': {},
+            },
+            'player': Mock(),
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._destroy_player = Mock()
+        self.module._Audioplayer__play_track = Mock()
+        self.module.shuffle_playlist = Mock()
+
+        result = self.module._Audioplayer__handle_end_of_playlist('the-uuid')
+
+        self.assertTrue(result)
+        self.module._destroy_player.assert_not_called()
+        self.module._Audioplayer__play_track.assert_called_with(track1, 'the-uuid')
+        self.module.shuffle_playlist.assert_called()
 
     def test_play_previous_track(self):
         self.init()
