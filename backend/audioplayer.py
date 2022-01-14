@@ -25,7 +25,7 @@ class Audioplayer(CleepModule):
     """
 
     MODULE_AUTHOR = "Cleep"
-    MODULE_VERSION = "1.0.0"
+    MODULE_VERSION = "1.1.0"
     MODULE_DEPS = []
     MODULE_DESCRIPTION = "Enjoy music playback"
     MODULE_LONGDESCRIPTION = (
@@ -38,7 +38,7 @@ class Audioplayer(CleepModule):
         "<li>Propagate significative player events</li>"
         "</ul>"
     )
-    MODULE_TAGS = []
+    MODULE_TAGS = ["audio", "music", "playback", "player"]
     MODULE_CATEGORY = CATEGORIES.MEDIA
     MODULE_URLINFO = "https://github.com/tangb/cleepapp-audioplayer"
     MODULE_URLHELP = None
