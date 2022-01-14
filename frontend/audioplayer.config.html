@@ -34,15 +34,15 @@
             <p>No player running</p>
         </md-list-item>
         <md-list-item ng-repeat="player in audioplayerCtl.audioplayerService.players track by player.playeruuid" class="md-2-line">
-            <md-icon md-svg-icon="play" ng-if="player.state===4" ></md-icon>
-            <md-icon md-svg-icon="pause" ng-if="player.state===3"></md-icon>
-            <md-icon md-svg-icon="stop" ng-if="player.state!==3 && player.state!==4"></md-icon>
+            <md-icon md-svg-icon="play" ng-if="player.state==='playing'" ></md-icon>
+            <md-icon md-svg-icon="pause" ng-if="player.state==='paused'"></md-icon>
+            <md-icon md-svg-icon="stop" ng-if="player.state!=='playing' && player.state!=='paused'"></md-icon>
             <div class="md-list-item-text" ng-if="!player.metadata">
                 <h3>{{ player.playback.resource }}</h3>
                 <p>{{ player.playback.audio_format }}</p>
             </div>
             <div class="md-list-item-text" ng-if="player.metadata">
-                <h3>{{ player.metadata.title }}</h3>
+                <h3>{{ player.metadata.title || 'no title' }}</h3>
                 <p>
                     {{ player.metadata.artist || 'no artist' }} - {{ player.metadata.album || 'no album' }}
                 </p>

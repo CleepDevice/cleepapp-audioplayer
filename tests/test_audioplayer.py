@@ -575,7 +575,7 @@ class TestAudioplayer(unittest.TestCase):
         self.assertEqual(self.module.players['the-uuid']['internal']['last_state'], Gst.State.PAUSED)
         self.session.assert_event_called_with('audioplayer.playback.update', {
             'playeruuid': 'the-uuid',
-            'state': Gst.State.PAUSED,
+            'state': 'paused',
             'index': 0,
             'duration': 666,
             'metadata': {},
@@ -611,7 +611,7 @@ class TestAudioplayer(unittest.TestCase):
         self.assertEqual(self.module.players['the-uuid']['internal']['last_state'], Gst.State.PAUSED)
         self.session.assert_event_called_with('audioplayer.playback.update', {
             'playeruuid': 'the-uuid',
-            'state': Gst.State.PAUSED,
+            'state': 'paused',
             'index': 0,
             'duration': 123,
             'metadata': {},
@@ -722,7 +722,7 @@ class TestAudioplayer(unittest.TestCase):
             'playeruuid': 'the-uuid',
             'track': 'track1',
             'metadata': {},
-            'state': Gst.State.PAUSED,
+            'state': 'paused',
             'duration': 123
         })
 
@@ -756,7 +756,7 @@ class TestAudioplayer(unittest.TestCase):
             'playeruuid': 'dummy',
             'track': None,
             'metadata': {},
-            'state': Gst.State.NULL,
+            'state': 'stopped',
             'duration': 0
         })
 
@@ -1139,19 +1139,19 @@ class TestAudioplayer(unittest.TestCase):
             }
         }
 
-        with self.assertRaises(CommandError) as cm:
+        with self.assertRaises(InvalidParameter) as cm:
             self.module.remove_track('the-uuid', 0)
         self.assertEqual(str(cm.exception), "You can't remove current track")
 
-        with self.assertRaises(CommandError) as cm:
+        with self.assertRaises(InvalidParameter) as cm:
             self.module.remove_track('the-uuid', -1)
         self.assertEqual(str(cm.exception), 'Track index is invalid')
 
-        with self.assertRaises(CommandError) as cm:
+        with self.assertRaises(InvalidParameter) as cm:
             self.module.remove_track('the-uuid', 3)
         self.assertEqual(str(cm.exception), 'Track index is invalid')
 
-        with self.assertRaises(CommandError) as cm:
+        with self.assertRaises(InvalidParameter) as cm:
             self.module.remove_track('dummy', 1)
         self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
@@ -1451,10 +1451,103 @@ class TestAudioplayer(unittest.TestCase):
             },
         }
         self.module.players = {'the-uuid': player_data}
+        self.module._set_volume = Mock()
 
         self.module.pause_playback('the-uuid')
 
         player.get_state.assert_called_with(1)
+        player.set_state.assert_called_with(Gst.State.PAUSED)
+        self.module._set_volume.assert_not_called()
+
+    def test_pause_playback_with_volume(self):
+        self.init()
+        player = Mock()
+        player.get_state.return_value = ('dummy', Gst.State.PLAYING, 'dummy')
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'index': 1,
+                'tracks': [track1],
+                'repeat': True,
+                'volume': 55,
+                'metadata': {},
+            },
+            'player': player,
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+        self.module._set_volume = Mock()
+
+        self.module.pause_playback('the-uuid', volume=66)
+
+        self.module._set_volume.assert_called_with('the-uuid', 66)
+
+    def test_pause_playback_force_play(self):
+        self.init()
+        player = Mock()
+        player.get_state.return_value = ('dummy', Gst.State.PLAYING, 'dummy')
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'index': 1,
+                'tracks': [track1],
+                'repeat': True,
+                'volume': 55,
+                'metadata': {},
+            },
+            'player': player,
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+
+        self.module.pause_playback('the-uuid', force_play=True)
+
+        player.set_state.assert_called_with(Gst.State.PLAYING)
+
+    def test_pause_playback_force_pause(self):
+        self.init()
+        player = Mock()
+        player.get_state.return_value = ('dummy', Gst.State.PLAYING, 'dummy')
+        track1 = self.module._make_track('/resource/track1', 'audio/dummy')
+        player_data = {
+            'uuid': 'the-uuid',
+            'playlist': {
+                'index': 1,
+                'tracks': [track1],
+                'repeat': True,
+                'volume': 55,
+                'metadata': {},
+            },
+            'player': player,
+            'source': Mock(),
+            'volume': Mock(),
+            'pipeline': [],
+            'internal': {
+                'to_destroy': False,
+                'tags_sent': True,
+                'last_state': 1,
+            },
+        }
+        self.module.players = {'the-uuid': player_data}
+
+        self.module.pause_playback('the-uuid', force_pause=True)
+
         player.set_state.assert_called_with(Gst.State.PAUSED)
 
     def test_pause_playback_while_paused(self):
@@ -1491,7 +1584,7 @@ class TestAudioplayer(unittest.TestCase):
     def test_pause_playback_invalid_params(self):
         self.init()
 
-        with self.assertRaises(CommandError) as cm:
+        with self.assertRaises(InvalidParameter) as cm:
             self.module.pause_playback('dummy')
         self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
@@ -1533,7 +1626,7 @@ class TestAudioplayer(unittest.TestCase):
     def test_stop_playback_invalid_params(self):
         self.init()
 
-        with self.assertRaises(CommandError) as cm:
+        with self.assertRaises(InvalidParameter) as cm:
             self.module.stop_playback('dummy')
         self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
@@ -1667,7 +1760,7 @@ class TestAudioplayer(unittest.TestCase):
     def test_play_next_track_invalid_params(self):
         self.init()
 
-        with self.assertRaises(CommandError) as cm:
+        with self.assertRaises(InvalidParameter) as cm:
             self.module.play_next_track('dummy')
         self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
@@ -1976,7 +2069,7 @@ class TestAudioplayer(unittest.TestCase):
     def test_play_previous_track_invalid_params(self):
         self.init()
 
-        with self.assertRaises(CommandError) as cm:
+        with self.assertRaises(InvalidParameter) as cm:
             self.module.play_previous_track('dummy')
         self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
@@ -2012,7 +2105,7 @@ class TestAudioplayer(unittest.TestCase):
         self.assertListEqual(players, [{
             'playeruuid': 'the-uuid',
             'track': track2,
-            'state': Gst.State.PLAYING,
+            'state': 'playing',
             'duration': 666,
             'index': 1,
             'metadata': {},
@@ -2052,7 +2145,7 @@ class TestAudioplayer(unittest.TestCase):
     def test_get_playlist_invalid_params(self):
         self.init()
 
-        with self.assertRaises(CommandError) as cm:
+        with self.assertRaises(InvalidParameter) as cm:
             self.module.get_playlist('dummy')
         self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
@@ -2081,7 +2174,7 @@ class TestAudioplayer(unittest.TestCase):
         }
         self.module.players = {'the-uuid': player_data}
         
-        self.module.set_volume('the-uuid', 0)
+        self.module.set_volume('the-uuid', 1)
         self.module.set_volume('the-uuid', 100)
         self.module.set_volume('the-uuid', 66)
 
@@ -2111,17 +2204,17 @@ class TestAudioplayer(unittest.TestCase):
         }
         self.module.players = {'the-uuid': player_data}
 
-        with self.assertRaises(CommandError) as cm:
+        with self.assertRaises(InvalidParameter) as cm:
             self.module.set_volume('dummy', 50)
         self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
         with self.assertRaises(InvalidParameter) as cm:
             self.module.set_volume('the-uuid', -1)
-        self.assertEqual(str(cm.exception), 'Parameter "volume" is invalid')
+        self.assertEqual(str(cm.exception), 'Volume must be between 1 and 100')
 
         with self.assertRaises(InvalidParameter) as cm:
             self.module.set_volume('the-uuid', 101)
-        self.assertEqual(str(cm.exception), 'Parameter "volume" is invalid')
+        self.assertEqual(str(cm.exception), 'Volume must be between 1 and 100')
 
     def test_set_repeat(self):
         self.init()
@@ -2155,7 +2248,7 @@ class TestAudioplayer(unittest.TestCase):
     def test_set_repeat_invalid_params(self):
         self.init()
 
-        with self.assertRaises(CommandError) as cm:
+        with self.assertRaises(InvalidParameter) as cm:
             self.module.set_repeat('dummy', True)
         self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 

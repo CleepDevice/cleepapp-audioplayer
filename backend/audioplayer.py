@@ -3,12 +3,18 @@
 import os
 import random
 import gi
+
 # pylint: disable=C0413
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst
 import magic
 from urllib3.util import parse_url
-from cleep.exception import MissingParameter, InvalidParameter, CommandError, CommandInfo
+from cleep.exception import (
+    MissingParameter,
+    InvalidParameter,
+    CommandError,
+    CommandInfo,
+)
 from cleep.core import CleepModule
 from cleep.common import CATEGORIES
 
@@ -101,6 +107,14 @@ class Audioplayer(CleepModule):
         },
     }
     MAX_PLAYLIST_TRACKS = 20
+
+    PLAYER_STATES = {
+        Gst.State.VOID_PENDING: "stopped",
+        Gst.State.NULL: "stopped",
+        Gst.State.READY: "stopped",
+        Gst.State.PAUSED: "paused",
+        Gst.State.PLAYING: "playing",
+    }
 
     def __init__(self, bootstrap, debug_enabled):
         """
@@ -439,7 +453,7 @@ class Audioplayer(CleepModule):
                 "playeruuid": player_uuid,
                 "track": None,
                 "metadata": {},
-                "state": Gst.State.NULL,
+                "state": self._get_player_state(Gst.State.NULL),
                 "duration": 0,
             }
 
@@ -449,7 +463,7 @@ class Audioplayer(CleepModule):
             "playeruuid": player_uuid,
             "track": player["playlist"]["tracks"][player["playlist"]["index"]],
             "metadata": player["playlist"]["metadata"],
-            "state": player["internal"]["last_state"],
+            "state": self._get_player_state(player["internal"]["last_state"]),
             "duration": player["playlist"]["duration"],
         }
 
@@ -464,7 +478,7 @@ class Audioplayer(CleepModule):
             tuple: audio metadata::
 
             (
-                boolean: metadata is complete
+                bool: metadata is complete
                 dict: list of tags in usable format
             )
 
@@ -598,12 +612,32 @@ class Audioplayer(CleepModule):
             CommandError: if player does not exist
             MissingParameter: if parameters are missing
         """
-        self._check_parameters([
-            {'name': 'player_uuid', 'value': player_uuid, 'type': str, 'validator': lambda v: v in self.players, 'message': f'Player "{player_uuid}" does not exist' },
-            {'name': 'resource', 'value': resource, 'type': str},
-            {'name': 'audio_format', 'value': audio_format, 'type': str, 'none': True, 'validator': lambda v: v in self.AUDIO_PIPELINE_ELEMENTS.keys(), 'message': f'Audio format "{audio_format}" is not supported'},
-            {'name': 'track_number', 'value': track_index, 'type': int, 'none': True},
-        ])
+        self._check_parameters(
+            [
+                {
+                    "name": "player_uuid",
+                    "value": player_uuid,
+                    "type": str,
+                    "validator": lambda v: v in self.players,
+                    "message": f'Player "{player_uuid}" does not exist',
+                },
+                {"name": "resource", "value": resource, "type": str},
+                {
+                    "name": "audio_format",
+                    "value": audio_format,
+                    "type": str,
+                    "none": True,
+                    "validator": lambda v: v in self.AUDIO_PIPELINE_ELEMENTS.keys(),
+                    "message": f'Audio format "{audio_format}" is not supported',
+                },
+                {
+                    "name": "track_number",
+                    "value": track_index,
+                    "type": int,
+                    "none": True,
+                },
+            ]
+        )
         if not Audioplayer._is_filepath(resource) and not audio_format:
             raise MissingParameter("Url resource must have audio_format specified")
 
@@ -652,13 +686,13 @@ class Audioplayer(CleepModule):
             MissingParameter: if parameters are missing
             InvalidParameter: if command parameters are invalid
         """
-        self._check_parameters([
-            {'name': 'tracks', 'value': tracks, 'type': list}
-        ])
+        self._check_parameters([{"name": "tracks", "value": tracks, "type": list}])
 
         for track in tracks:
-            if not self.add_track(player_uuid, track['resource'], track['audio_format']):
-                raise CommandInfo('All tracks were not added (playlist limit reached)')
+            if not self.add_track(
+                player_uuid, track["resource"], track["audio_format"]
+            ):
+                raise CommandInfo("All tracks were not added (playlist limit reached)")
 
     def remove_track(self, player_uuid, track_index):
         """
@@ -666,16 +700,36 @@ class Audioplayer(CleepModule):
 
         Args:
             player_uuid (string): player identifier
-            track_index (number): track index (0 is the first playlist track)
+            track_index (int): track index (0 is the first playlist track)
         """
-        if player_uuid not in self.players:
-            raise CommandError(f'Player "{player_uuid}" does not exist')
-        if track_index < 0 or track_index >= len(
-            self.players[player_uuid]["playlist"]["tracks"]
-        ):
-            raise CommandError("Track index is invalid")
-        if track_index == self.players[player_uuid]["playlist"]["index"]:
-            raise CommandError("You can't remove current track")
+        self._check_parameters(
+            [
+                {
+                    "name": "player_uuid",
+                    "value": player_uuid,
+                    "type": str,
+                    "validator": lambda v: v in self.players,
+                    "message": f'Player "{player_uuid}" does not exist',
+                },
+                {
+                    "name": "track_index",
+                    "value": track_index,
+                    "type": int,
+                    "validator": lambda v: 0
+                    <= v
+                    < len(self.players[player_uuid]["playlist"]["tracks"]),
+                    "message": "Track index is invalid",
+                },
+                {
+                    "name": "track_index",
+                    "value": track_index,
+                    "type": int,
+                    "validator": lambda v: v
+                    != self.players[player_uuid]["playlist"]["index"],
+                    "message": "You can't remove current track",
+                },
+            ]
+        )
 
         removed_track = self.players[player_uuid]["playlist"]["tracks"].pop(track_index)
         self.logger.debug(
@@ -695,6 +749,28 @@ class Audioplayer(CleepModule):
         Returns:
             string: player identifier
         """
+        self._check_parameters(
+            [
+                {"name": "resource", "value": resource, "type": str, "none": True},
+                {
+                    "name": "audio_format",
+                    "value": audio_format,
+                    "type": str,
+                    "none": True,
+                    "validator": lambda v: v in self.AUDIO_PIPELINE_ELEMENTS,
+                    "message": f"Audio format {audio_format}is not supported",
+                },
+                {
+                    "name": "volume",
+                    "value": volume,
+                    "type": int,
+                    "validator": lambda v: 0 < v <= 100,
+                    "message": "Volume must be between 1 and 100",
+                },
+                {"name": "paused", "value": paused, "type": bool},
+            ]
+        )
+
         player = self.__create_player()
         track = Audioplayer._make_track(resource, audio_format)
         player["playlist"]["index"] = 0
@@ -706,7 +782,7 @@ class Audioplayer(CleepModule):
             self.__play_track(track, player["uuid"], volume, paused)
             return player["uuid"]
         except Exception as error:
-            self.logger.exception('Unable to play resource %s', resource)
+            self.logger.exception("Unable to play resource %s", resource)
             self.__destroy_player(player)
             raise CommandError("Unable to play resource") from error
 
@@ -741,7 +817,9 @@ class Audioplayer(CleepModule):
             # start playback
             state = Gst.State.PAUSED if paused else Gst.State.PLAYING
             player["player"].set_state(state)
-            self.logger.info('Player "%s" is playing %s (paused %s)', player_uuid, track, paused)
+            self.logger.info(
+                'Player "%s" is playing %s (paused %s)', player_uuid, track, paused
+            )
         except Exception as error:
             self.logger.exception("Error playing track %s with %s", track, player_uuid)
             raise error
@@ -768,31 +846,65 @@ class Audioplayer(CleepModule):
             0,
         )
 
-    def pause_playback(self, player_uuid):
+    def pause_playback(
+        self, player_uuid, force_pause=False, force_play=False, volume=None
+    ):
         """
         Toggle pause status for specified player.
 
         Args:
             player_uuid (string): player identifier
+            force_pause (bool): force pause
+            force_play (bool): force play. If both force_pause and force_play are True it toggles current state
+            volume (int): if specified set player volume
 
         Returns:
-            bool: True if player playback is paused, False if player playback is unpaused
+            string: player state as describe in PLAYER_STATES
 
         Raises:
-            CommandError: if player does not exist
+            InvalidParameter
+            MissingParameter
         """
-        if player_uuid not in self.players:
-            raise CommandError(f'Player "{player_uuid}" does not exist')
+        self._check_parameters(
+            [
+                {
+                    "name": "player_uuid",
+                    "value": player_uuid,
+                    "type": str,
+                    "validator": lambda v: v in self.players,
+                    "message": f'Player "{player_uuid}" does not exist',
+                },
+                {
+                    "name": "volume",
+                    "value": volume,
+                    "type": int,
+                    "none": True,
+                    "validator": lambda v: 0 < v <= 100,
+                    "message": "Volume must be between 1 and 100",
+                },
+                {"name": "force_pause", "value": force_pause, "type": bool},
+                {"name": "force_play", "value": force_play, "type": bool},
+            ]
+        )
+
+        if volume:
+            self._set_volume(player_uuid, volume)
 
         player = self.players[player_uuid]
-        _, current_state, _ = player["player"].get_state(1)
-        self.logger.debug("Change player %s state to %s", player_uuid, current_state)
-        new_state = (
-            Gst.State.PAUSED
-            if current_state == Gst.State.PLAYING
-            else Gst.State.PLAYING
-        )
+        new_state = Gst.State.PAUSED if force_pause else Gst.State.PLAYING
+        if (force_pause and force_play) or (not force_pause and not force_play):
+            _, current_state, _ = player["player"].get_state(1)
+            self.logger.debug(
+                "Change player %s state to %s", player_uuid, current_state
+            )
+            new_state = (
+                Gst.State.PAUSED
+                if current_state == Gst.State.PLAYING
+                else Gst.State.PLAYING
+            )
         player["player"].set_state(new_state)
+
+        return self._get_player_state(new_state)
 
     def stop_playback(self, player_uuid):
         """
@@ -807,8 +919,17 @@ class Audioplayer(CleepModule):
         Raises:
             CommandError: if player does not exist
         """
-        if player_uuid not in self.players:
-            raise CommandError(f'Player "{player_uuid}" does not exist')
+        self._check_parameters(
+            [
+                {
+                    "name": "player_uuid",
+                    "value": player_uuid,
+                    "type": str,
+                    "validator": lambda v: v in self.players,
+                    "message": f'Player "{player_uuid}" does not exist',
+                },
+            ]
+        )
 
         self.players[player_uuid]["player"].set_state(Gst.State.NULL)
         self._destroy_player(self.players[player_uuid])
@@ -836,8 +957,17 @@ class Audioplayer(CleepModule):
         Raises:
             CommandError: if player does not exist
         """
-        if player_uuid not in self.players:
-            raise CommandError(f'Player "{player_uuid}" does not exist')
+        self._check_parameters(
+            [
+                {
+                    "name": "player_uuid",
+                    "value": player_uuid,
+                    "type": str,
+                    "validator": lambda v: v in self.players,
+                    "message": f'Player "{player_uuid}" does not exist',
+                },
+            ]
+        )
 
         playlist = self.players[player_uuid]["playlist"]
         if playlist["index"] + 1 >= len(playlist["tracks"]) and not playlist["repeat"]:
@@ -889,7 +1019,7 @@ class Audioplayer(CleepModule):
             player_uuid (string): player identifier
 
         Returns:
-            boolean: True if playback continues, False otherwise
+            bool: True if playback continues, False otherwise
         """
         playlist = self.players[player_uuid]["playlist"]
         if playlist["repeat"]:
@@ -924,8 +1054,18 @@ class Audioplayer(CleepModule):
         Raises:
             CommandError: if command failed
         """
-        if player_uuid not in self.players:
-            raise CommandError(f'Player "{player_uuid}" does not exist')
+        self._check_parameters(
+            [
+                {
+                    "name": "player_uuid",
+                    "value": player_uuid,
+                    "type": str,
+                    "validator": lambda v: v in self.players,
+                    "message": f'Player "{player_uuid}" does not exist',
+                },
+            ]
+        )
+
         playlist = self.players[player_uuid]["playlist"]
         self.logger.debug('Player "%s" playlist: %s', player_uuid, playlist)
         if playlist["index"] == 0:
@@ -978,8 +1118,17 @@ class Audioplayer(CleepModule):
             }
 
         """
-        if player_uuid not in self.players:
-            raise CommandError(f'Player "{player_uuid}" does not exist')
+        self._check_parameters(
+            [
+                {
+                    "name": "player_uuid",
+                    "value": player_uuid,
+                    "type": str,
+                    "validator": lambda v: v in self.players,
+                    "message": f'Player "{player_uuid}" does not exist',
+                },
+            ]
+        )
 
         return self.players[player_uuid]["playlist"]
 
@@ -992,14 +1141,40 @@ class Audioplayer(CleepModule):
             volume (number): percentage volume
 
         Raises:
-            CommandError: if player does not exist
-            InvalidParameter: if volume is invalid
+            InvalidParameter
+            MissingParameter
         """
-        if player_uuid not in self.players:
-            raise CommandError(f'Player "{player_uuid}" does not exist')
-        if volume < 0 or volume > 100:
-            raise InvalidParameter('Parameter "volume" is invalid')
+        self._check_parameters(
+            [
+                {
+                    "name": "player_uuid",
+                    "value": player_uuid,
+                    "type": str,
+                    "validator": lambda v: v in self.players,
+                    "message": f'Player "{player_uuid}" does not exist',
+                },
+                {
+                    "name": "volume",
+                    "value": volume,
+                    "type": int,
+                    "none": True,
+                    "validator": lambda v: 0 < v <= 100,
+                    "message": "Volume must be between 1 and 100",
+                },
+            ]
+        )
 
+        self._set_volume(player_uuid, volume)
+
+    def _set_volume(self, player_uuid, volume):
+        """
+        Set player volume
+
+        Args:
+            player_uuid (string): player identifier
+            volume (int): volume to set
+        """
+        self.logger.debug('=====> set player %s volume to %s', player_uuid, volume)
         self.players[player_uuid]["volume"].set_property(
             "volume", float(volume / 100.0)
         )
@@ -1011,14 +1186,29 @@ class Audioplayer(CleepModule):
 
         Args:
             player_uuid (string): player identifier
-            repeat (boolean): True to repeat playlist, False otherwise
-            shuffle (boolean): True to shuffle playlist when end is reached (default False)
+            repeat (bool): True to repeat playlist, False otherwise
+            shuffle (bool): True to shuffle playlist when end is reached (default False)
 
         Raises:
             CommandError: if player does not exist
         """
-        if player_uuid not in self.players:
-            raise CommandError(f'Player "{player_uuid}" does not exist')
+        self._check_parameters(
+            [
+                {
+                    "name": "player_uuid",
+                    "value": player_uuid,
+                    "type": str,
+                    "validator": lambda v: v in self.players,
+                    "message": f'Player "{player_uuid}" does not exist',
+                },
+                {"name": "repeat", "value": repeat, "type": bool},
+                {
+                    "name": "shuffle",
+                    "value": shuffle,
+                    "type": bool,
+                },
+            ]
+        )
 
         self.players[player_uuid]["playlist"]["repeat"] = repeat
         self.players[player_uuid]["playlist"]["shuffle"] = shuffle
@@ -1038,3 +1228,15 @@ class Audioplayer(CleepModule):
         random.shuffle(tracks)
         tracks.insert(0, current_track)
         self.players[player_uuid]["playlist"]["index"] = 0
+
+    def _get_player_state(self, gst_state):
+        """
+        Return human readable player state
+
+        Args:
+            gst_state (Gst.State): gstreamer player state
+
+        Returns:
+            string: player state as returned by PLAYER_STATES
+        """
+        return self.PLAYER_STATES[gst_state]
