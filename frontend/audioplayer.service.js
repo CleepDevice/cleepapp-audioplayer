@@ -111,7 +111,7 @@ function($rootScope, rpcService) {
         }
 
         // delete non running player
-        if (params.state === 1) {
+        if (params.state === 'stopped') {
             for (var i=0; i<self.players.length; i++) {
                 if (self.players[i].playeruuid === params.playeruuid) {
                     self.players.splice(i, 1);
