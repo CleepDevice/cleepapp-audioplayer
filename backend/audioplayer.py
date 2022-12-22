@@ -8,7 +8,7 @@ import gi
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst
 import magic
-from urllib3.util import parse_url
+from urllib.parse import urlparse
 from cleep.exception import (
     MissingParameter,
     InvalidParameter,
@@ -29,7 +29,7 @@ class Audioplayer(CleepModule):
     MODULE_DEPS = []
     MODULE_DESCRIPTION = "Enjoy music playback"
     MODULE_LONGDESCRIPTION = (
-        "This application provides an common way to play audio media on your device.<br>"
+        "This application provides a common way to play audio media on your device.<br>"
         "Application features: <ul>"
         "<li>Play most used audio formats (mp3, flac, ogg and aac)</li>"
         "<li>Play local file and remote streams</li>"
@@ -126,7 +126,7 @@ class Audioplayer(CleepModule):
         """
         CleepModule.__init__(self, bootstrap, debug_enabled)
 
-        # list of players ::
+        # list of players. Players are volatile data and must be hold by creator::
         #   {
         #       player_uuid (string): {
         #           see list of fields in __create_player
@@ -566,8 +566,7 @@ class Audioplayer(CleepModule):
             return True
 
         # make sure resource is a valid url
-        parse_result = parse_url(resource)
-        if parse_result.scheme in ("http", "https"):
+        if urlparse(resource).scheme in ("http", "https"):
             return False
 
         raise Exception("Resource is invalid (file may not exist)")
@@ -736,7 +735,7 @@ class Audioplayer(CleepModule):
             'Player "%s" has track removed: %s', player_uuid, removed_track
         )
 
-    def start_playback(self, resource, audio_format=None, volume=100, paused=False):
+    def start_playback(self, resource, audio_format=None, volume=100, paused=False, repeat=False, shuffle=False):
         """
         Create a player and start playing specified resource
 
@@ -745,6 +744,8 @@ class Audioplayer(CleepModule):
             audio_format (string): audio format (mime). Mandatory if resource is an url
             volume (int): player volume (default 100)
             paused (bool): start playback paused. Useful to create player instance in silently
+            repeat (bool): enable repeat
+            shuffle (bool): True to shuffle playlist at end of it
 
         Returns:
             string: player identifier
@@ -768,6 +769,8 @@ class Audioplayer(CleepModule):
                     "message": "Volume must be between 1 and 100",
                 },
                 {"name": "paused", "value": paused, "type": bool},
+                {"name": "repeat", "value": repeat, "type": bool},
+                {"name": "shuffle", "value": shuffle, "type": bool},
             ]
         )
 
@@ -777,6 +780,8 @@ class Audioplayer(CleepModule):
         player["playlist"]["volume"] = volume
         player["playlist"]["tracks"].append(track)
         self.players[player["uuid"]] = player
+
+        self.set_repeat(player["uuid"], repeat, shuffle)
 
         try:
             self.__play_track(track, player["uuid"], volume, paused)
@@ -818,7 +823,7 @@ class Audioplayer(CleepModule):
             state = Gst.State.PAUSED if paused else Gst.State.PLAYING
             player["player"].set_state(state)
             self.logger.info(
-                'Player "%s" is playing %s (paused %s)', player_uuid, track, paused
+                'Player "%s" %s %s', player_uuid, "created for" if paused else "is playing", track
             )
         except Exception as error:
             self.logger.exception("Error playing track %s with %s", track, player_uuid)
@@ -934,10 +939,11 @@ class Audioplayer(CleepModule):
         self.players[player_uuid]["player"].set_state(Gst.State.NULL)
         self._destroy_player(self.players[player_uuid])
 
+        playback_info = self.__get_playback_info(player_uuid)
         self.event_playback_update.send(
             {
                 "playeruuid": player_uuid,
-                "state": Gst.State.NULL,
+                "state": self._get_player_state(Gst.State.NULL),
             }
         )
 
@@ -1209,6 +1215,7 @@ class Audioplayer(CleepModule):
                 },
             ]
         )
+        self.logger.debug("set_repeat: player_uuid=%s, repeat=%s, shuffle=%s", player_uuid, repeat, shuffle)
 
         self.players[player_uuid]["playlist"]["repeat"] = repeat
         self.players[player_uuid]["playlist"]["shuffle"] = shuffle
