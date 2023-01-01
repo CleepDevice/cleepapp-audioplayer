@@ -499,7 +499,7 @@ class Audioplayer(CleepModule):
         self.logger.trace("All tags: %s", tags.to_string())
         for index in range(tags.n_tags()):
             tag_name = tags.nth_tag_name(index)
-            self.logger.debug(" => tag name: %s", tag_name)
+            self.logger.trace(" => tag name: %s", tag_name)
             if tag_name in ("artist", "album-artist"):
                 metadata["artist"] = tags.get_string(tag_name)[1]
             elif tag_name == "album":
@@ -1087,6 +1087,37 @@ class Audioplayer(CleepModule):
 
         return True
 
+    def play_track(self, player_uuid, track_index):
+        """
+        Play track at specified index
+
+        Args:
+            player_uuid (string): player identifier
+            track_index (int): track index
+        """
+        if player_uuid not in self.players:
+            self.logger.warning(f"Cant play track: player {player_uuid} does not exist")
+            return False
+        playlist = self.players[player_uuid]["playlist"]
+        if track_index is None or track_index >= len(playlist["tracks"]):
+            self.logger.warning(f"Cant play track: invalid track index {track_index} specified")
+            return False
+
+        # update playlist
+        playlist["index"] = track_index
+        playlist["duration"] = None
+        next_track = playlist["tracks"][playlist["index"]]
+        self.logger.debug(
+            'Found next track to play on player "%s": %s', player_uuid, next_track
+        )
+        try:
+            self.__play_track(next_track, player_uuid)
+        except Exception:
+            self.logger.exception("Error playing next track %s", next_track)
+            return False
+
+        return True
+
     def get_players(self):
         """
         Return list of players
@@ -1180,7 +1211,7 @@ class Audioplayer(CleepModule):
             player_uuid (string): player identifier
             volume (int): volume to set
         """
-        self.logger.debug('=====> set player %s volume to %s', player_uuid, volume)
+        self.logger.debug('Set player %s volume to %s', player_uuid, volume)
         self.players[player_uuid]["volume"].set_property(
             "volume", float(volume / 100.0)
         )

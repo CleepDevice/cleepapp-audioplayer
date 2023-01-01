@@ -1,10 +1,19 @@
 # CHANGELOG
 
+## [UNRELEASED]
+
+### Fixed
+- When playback stopped on UI, player stays alive
+
+### Added
+- Add way to configure repeat/shuffle playlist options at player creation
+- Add function to start playback of specific playlist track
+
 ## [1.1.0] - 2022-01-14
 
 ### Added
 
-* Create player silently (do not start music fater player created)
+* Create player silently (do not start music after player created)
 * Add shuffle playlist option after playlist repeated
 * Improve command parameters checking
 * Add force_play and force_pause to pause_playback command to force player state
