@@ -1094,12 +1094,15 @@ class Audioplayer(CleepModule):
         Args:
             player_uuid (string): player identifier
             track_index (int): track index
+
+        Returns:
+            bool: True if playback started for specified track index, False otherwise
         """
         if player_uuid not in self.players:
             self.logger.warning(f"Cant play track: player {player_uuid} does not exist")
             return False
         playlist = self.players[player_uuid]["playlist"]
-        if track_index is None or track_index >= len(playlist["tracks"]):
+        if track_index is None or track_index<0 or track_index >= len(playlist["tracks"]):
             self.logger.warning(f"Cant play track: invalid track index {track_index} specified")
             return False
 
@@ -1113,7 +1116,7 @@ class Audioplayer(CleepModule):
         try:
             self.__play_track(next_track, player_uuid)
         except Exception:
-            self.logger.exception("Error playing next track %s", next_track)
+            self.logger.exception("Error playing track %s at index %s", next_track, track_index)
             return False
 
         return True
