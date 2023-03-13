@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## [UNRELEASED]
+## [1.2.0] - 2023-03-11
 
 ### Fixed
 - When playback stopped on UI, player stays alive
@@ -11,7 +11,7 @@
 
 ## [1.1.0] - 2022-01-14
 
-### Added
+### Added
 
 * Create player silently (do not start music after player created)
 * Add shuffle playlist option after playlist repeated
