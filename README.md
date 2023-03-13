@@ -29,7 +29,7 @@ Some playlist features are available:
 * shuffle tracks
 * repeat playlist when end reached
 
-## Player cycle life
+## Player lifecycle
 
 A player is alive until there is no track to play in its playlist.
 
