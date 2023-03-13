@@ -41,10 +41,10 @@ class Audioplayer(CleepModule):
     )
     MODULE_TAGS = ["audio", "music", "playback", "player"]
     MODULE_CATEGORY = CATEGORIES.MEDIA
-    MODULE_URLINFO = "https://github.com/tangb/cleepapp-audioplayer"
+    MODULE_URLINFO = "https://github.com/CleepDevice/cleepapp-audioplayer"
     MODULE_URLHELP = None
     MODULE_URLSITE = None
-    MODULE_URLBUGS = "https://github.com/tangb/cleepapp-audioplayer/issues"
+    MODULE_URLBUGS = "https://github.com/CleepDevice/cleepapp-audioplayer/issues"
 
     MODULE_CONFIG_FILE = "audioplayer.conf"
     DEFAULT_CONFIG = {}
