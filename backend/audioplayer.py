@@ -600,10 +600,10 @@ class Audioplayer(CleepModule):
             resource playing is terminated.
 
         Args:
-            player_uuid (string): player identifier returned by play command
-            resource (string): local filepath or url
-            audio_format (string): audio format (mime). Mandatory if resource is an url
-            track_index (number): add new track to specified playlist position or at end of playlist
+            player_uuid (str): player identifier returned by play command
+            resource (str): local filepath or url
+            audio_format (str, optional): audio format (mime). Mandatory if resource is an url. Defaults to None.
+            track_index (number, optional): add new track to specified playlist position or at end of playlist. Defaults to None.
 
         Returns:
             bool: True if track added successfully, False if max playlist tracks reached
@@ -671,6 +671,7 @@ class Audioplayer(CleepModule):
         Add multiple tracks at once
 
         Args:
+            player_uuid (str): player identifier
             tracks (list): list of tracks::
 
                 [
@@ -749,12 +750,12 @@ class Audioplayer(CleepModule):
         Create a player and start playing specified resource
 
         Args:
-            resource (string): local filepath or url
-            audio_format (string): audio format (mime). Mandatory if resource is an url
-            volume (int): player volume (default 100)
-            paused (bool): start playback paused. Useful to create player instance in silently
-            repeat (bool): enable repeat
-            shuffle (bool): True to shuffle playlist at end of it
+            resource (str): local filepath or url
+            audio_format (str, optional): audio format (mime). Mandatory if resource is an url. Defaults to None.
+            volume (int, optional): player volume. Defaults to 100.
+            paused (bool, optional): start playback paused. Useful to create player instance in silently. Defaults to False.
+            repeat (bool, optional): enable repeat. Defaults to False.
+            shuffle (bool, optional): True to shuffle playlist at end of it. Defaults to False.
 
         Returns:
             string: player identifier
@@ -871,16 +872,12 @@ class Audioplayer(CleepModule):
 
         Args:
             player_uuid (string): player identifier
-            force_pause (bool): force pause
-            force_play (bool): force play. If both force_pause and force_play are True it toggles current state
-            volume (int): if specified set player volume
+            force_pause (bool, optional): force pause. Defaults to False.
+            force_play (bool, optional): force play. If both force_pause and force_play are True it toggles current state. Defaults to False.
+            volume (int, optional): if specified set player volume. Defaults to None.
 
         Returns:
             string: player state as describe in PLAYER_STATES
-
-        Raises:
-            InvalidParameter
-            MissingParameter
         """
         self._check_parameters(
             [
@@ -1200,10 +1197,6 @@ class Audioplayer(CleepModule):
         Args:
             player_uuid (string): player identifier
             volume (number): percentage volume
-
-        Raises:
-            InvalidParameter
-            MissingParameter
         """
         self._check_parameters(
             [
@@ -1248,7 +1241,7 @@ class Audioplayer(CleepModule):
         Args:
             player_uuid (string): player identifier
             repeat (bool): True to repeat playlist, False otherwise
-            shuffle (bool): True to shuffle playlist when end is reached (default False)
+            shuffle (bool, optional): True to shuffle playlist when end is reached. Defaults to False.
 
         Raises:
             CommandError: if player does not exist
