@@ -4,6 +4,9 @@
 ### Fixed
 - Fix documentation
 
+### Updated
+- Migrate to Cleep components
+
 ## [1.2.0] - 2023-03-11
 ### Fixed
 - When playback stopped on UI, player stays alive

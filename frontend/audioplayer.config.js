@@ -24,21 +24,30 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
         self.volume = 100;
         self.repeat = false;
         self.playerIndex = null;
+        self.players = [];
 
         self.$onInit = function() {
             audioplayerService.refreshPlayers();
+            self.playerControls = [
+                { icon: 'skip-previous', tooltip: 'Play previous track', click: self.previous },
+                { icon: 'play-pause', tooltip: 'Toggle play/pause', click: self.pause },
+                { icon: 'stop', tooltip: 'Stop playback', click: self.stop },
+                { icon: 'skip-next', tooltip: 'Play next track', click: self.next },
+            ];
         };
 
         self.play = function() {
+            console.log('play', {item});
             audioplayerService.play(self.url, self.selectedFormat);
         };
 
-        self.pause = function(playerId) {
-            audioplayerService.pause(playerId);
+        self.pause = function(item) {
+            console.log('pause', {item});
+            audioplayerService.pause(item.playerId);
         };
 
-        self.stop = function(playerId) {
-            audioplayerService.stop(playerId);
+        self.stop = function(item) {
+            audioplayerService.stop(item.playerId);
             self.cancelDialog();
         };
 
@@ -97,9 +106,9 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
                 });
         };
 
-        self.showPlaylist = function(playerId, playerIndex) {
-            self.loadPlaylist(playerId).then(() => {
-                self.playerIndex = playerIndex;
+        self.showPlaylist = function(item, index) {
+            self.loadPlaylist(item.playerId).then(() => {
+                self.playerIndex = index;
                 self.openDialog();
             });
         };
@@ -107,7 +116,7 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
         self.openDialog = function() {
             return $mdDialog.show({
                 controller: function() { return self; },
-                controllerAs: 'audioplayerCtl',
+                controllerAs: '$ctrl',
                 templateUrl: 'player.dialog.html',
                 parent: angular.element(document.body),
                 clickOutsideToClose: false,
@@ -127,6 +136,32 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
                 }
             }
         );
+
+    	self.parsePlayers = function(rawPlayers) {
+        	self.players.splice(0, self.players.length);
+    	    for (const player of rawPlayers) {
+        	    const title = player.metadata?.title ?? player.track.resource;
+            	const subtitle = player.metadata?.title ? player.metadata.artist || 'no artist' + ' - ' + player.metadata.album || 'no album' : player.track.audio_format;
+
+	            self.players.push({
+    	            title,
+        	        subtitle,
+            	    playerId: player.playeruuid,
+                	clicks: [
+	                    { tooltip: 'Toggle play/pause', icon: 'play-pause', click: self.pause },
+    	                { tooltip: 'Stop playback', icon: 'stop', click: self.stop },
+        	            { tooltip: 'Show player', icon: 'music-circle', click: self.showPlaylist },
+	                ],  
+    	        }); 
+        	}   
+    	};
+
+        $scope.$watchCollection(
+            () => audioplayerService.players,
+            (players) => {
+				self.parsePlayers(players);
+            }
+        );
     };
 
     return {
@@ -134,6 +169,6 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
         replace: true,
         scope: true,
         controller: audioplayerConfigController,
-        controllerAs: 'audioplayerCtl',
+        controllerAs: '$ctrl',
     };
 }]);

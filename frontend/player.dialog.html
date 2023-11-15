@@ -1,19 +1,24 @@
-<md-dialog aria-label="Add sensor dialog" flex="75">
-    <form ng-cloak>
+<md-dialog flex="75">
         <md-toolbar>
             <div class="md-toolbar-tools">
                 <h2>Player</h2>
                 <span flex></span>
-                <md-button class="md-icon-button" ng-click="audioplayerCtl.cancelDialog()" aria-label="Close dialog">
-                    <md-icon md-svg-icon="close"></md-icon>
+                <md-button class="md-icon-button" ng-click="$ctrl.cancelDialog()" aria-label="Close dialog">
+                    <cl-icon cl-mdi="close"></cl-icon>
                 </md-button>
             </div>
         </md-toolbar>
 
         <md-dialog-content class="md-dialog-content" layout-padding>
-            <md-list>
 
-                <!-- controls -->
+            <config-section cl-title="Player" cl-icon="gamepad-round-outline"></config-section>
+            <config-buttons cl-title="Controls" cl-buttons="$ctrl.playerControls" cl-force-display="true"></config-buttons>
+            <config-slider cl-title="Volume" cl-min="0" cl-max="100" cl-model="$ctrl.volume" cl-on-change="$ctrl.onVolumeChange()"></config-slider>
+            <config-checkbox cl-title="Repeat playlist" cl-model="$ctrl.repeat" cl-label="repeat" cl-click="$ctrl.setRepeat()"></config-checkbox>
+            <config-checkbox cl-title="Shuffle playlist" cl-model="$ctrl.shuffle" cl-label="shuffle"></config-checkbox>
+
+            <md-list>
+                <!--
                 <md-subheader class="md-no-sticky" style="background-color: #FFFFFF">Controls</md-subheader>
                 <md-list-item>
                     <md-icon md-svg-icon="chevron-right"></md-icon>
@@ -62,6 +67,7 @@
                         </md-button>
                     </md-input-container>
                 </md-list-item>
+                -->
 
                 <!-- add track -->
                 <md-subheader class="md-no-sticky" style="background-color: #FFFFFF">Add track to playlist</md-subheader>
@@ -118,5 +124,4 @@
 
             </md-list>
         </md-dialog-content>
-    </form>
 </md-dialog>
