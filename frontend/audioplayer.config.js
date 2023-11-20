@@ -37,38 +37,36 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
         };
 
         self.play = function() {
-            console.log('play', {item});
             audioplayerService.play(self.url, self.selectedFormat);
         };
 
-        self.pause = function(item) {
-            console.log('pause', {item});
-            audioplayerService.pause(item.playerId);
+        self.pause = function() {
+            audioplayerService.pause(self.selectedPlayerId);
         };
 
-        self.stop = function(item) {
-            audioplayerService.stop(item.playerId);
+        self.stop = function() {
+            audioplayerService.stop(self.selectedPlayerId);
             self.cancelDialog();
         };
 
-        self.next = function(playerId) {
-            audioplayerService.next(playerId);
+        self.next = function() {
+            audioplayerService.next(self.selectedPlayerId);
         };
 
-        self.previous = function(playerId) {
-            audioplayerService.previous(playerId);
+        self.previous = function() {
+            audioplayerService.previous(self.selectedPlayerId);
         };
 
-        self.setVolume = function(playerId) {
-            audioplayerService.setVolume(playerId, self.volume);
+        self.setVolume = function() {
+            audioplayerService.setVolume(self.selectedPlayerId, self.volume);
         };
 
-        self.setRepeat = function(playerId) {
-            audioplayerService.setRepeat(playerId, self.repeat);
+        self.setRepeat = function() {
+            audioplayerService.setRepeat(self.selectedPlayerId, self.repeat);
         };
 
-        self.shufflePlaylist = function(playerId) {
-            audioplayerService.shufflePlaylist(playerId)
+        self.shufflePlaylist = function() {
+            audioplayerService.shufflePlaylist(self.selectedPlayerId)
                 .then((response) => {
                     if (response.error) {
                         return;
@@ -77,7 +75,7 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
                 });
         };
 
-        self.addTrack = function(playerId) {
+        self.addTrack = function() {
             audioplayerService.addTrack(self.selectedPlayerId, self.url, self.selectedFormat, self.trackIndex)
                 .then((response) => {
                     if (response.error) {
@@ -87,8 +85,8 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
                 });
         };
 
-        self.removeTrack = function(playerId, trackIndex) {
-            audioplayerService.removeTrack(playerId, trackIndex)
+        self.removeTrack = function(trackIndex) {
+            audioplayerService.removeTrack(self.selectedPlayerId, trackIndex)
                 .then((response) => {
                     if (response.error) {
                         return;
@@ -137,29 +135,29 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
             }
         );
 
-    	self.parsePlayers = function(rawPlayers) {
-        	self.players.splice(0, self.players.length);
-    	    for (const player of rawPlayers) {
-        	    const title = player.metadata?.title ?? player.track.resource;
-            	const subtitle = player.metadata?.title ? player.metadata.artist || 'no artist' + ' - ' + player.metadata.album || 'no album' : player.track.audio_format;
+        self.parsePlayers = function(rawPlayers) {
+            self.players = [];
+            for (const player of rawPlayers) {
+                const title = player.metadata?.title ?? player.track.resource;
+                const subtitle = player.metadata?.title ? player.metadata.artist || 'no artist' + ' - ' + player.metadata.album || 'no album' : player.track.audio_format;
 
-	            self.players.push({
-    	            title,
-        	        subtitle,
-            	    playerId: player.playeruuid,
-                	clicks: [
-	                    { tooltip: 'Toggle play/pause', icon: 'play-pause', click: self.pause },
-    	                { tooltip: 'Stop playback', icon: 'stop', click: self.stop },
-        	            { tooltip: 'Show player', icon: 'music-circle', click: self.showPlaylist },
-	                ],  
-    	        }); 
-        	}   
-    	};
+                self.players.push({
+                    title,
+                    subtitle,
+                    playerId: player.playeruuid,
+                    clicks: [
+                        { tooltip: 'Toggle play/pause', icon: 'play-pause', click: self.pause },
+                        { tooltip: 'Stop playback', icon: 'stop', click: self.stop },
+                        { tooltip: 'Show player', icon: 'music-circle', click: self.showPlaylist },
+                    ],
+                });
+            }
+        };
 
         $scope.$watchCollection(
             () => audioplayerService.players,
             (players) => {
-				self.parsePlayers(players);
+                self.parsePlayers(players);
             }
         );
     };

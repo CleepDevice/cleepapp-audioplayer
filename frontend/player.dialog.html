@@ -4,15 +4,18 @@
                 <h2>Player</h2>
                 <span flex></span>
                 <md-button class="md-icon-button" ng-click="$ctrl.cancelDialog()" aria-label="Close dialog">
-                    <cl-icon cl-mdi="close"></cl-icon>
+                    <cl-icon cl-icon="close"></cl-icon>
                 </md-button>
             </div>
         </md-toolbar>
 
-        <md-dialog-content class="md-dialog-content" layout-padding>
+        <md-dialog-content layout-padding>
 
             <config-section cl-title="Player" cl-icon="gamepad-round-outline"></config-section>
-            <config-buttons cl-title="Controls" cl-buttons="$ctrl.playerControls" cl-force-display="true"></config-buttons>
+            <config-buttons
+                cl-title="Controls" cl-buttons="$ctrl.playerControls"
+                cl-limit="5" cl-meta="{ playerId: $ctrl.selectedPlayerId }"
+            ></config-buttons>
             <config-slider cl-title="Volume" cl-min="0" cl-max="100" cl-model="$ctrl.volume" cl-on-change="$ctrl.onVolumeChange()"></config-slider>
             <config-checkbox cl-title="Repeat playlist" cl-model="$ctrl.repeat" cl-label="repeat" cl-click="$ctrl.setRepeat()"></config-checkbox>
             <config-checkbox cl-title="Shuffle playlist" cl-model="$ctrl.shuffle" cl-label="shuffle"></config-checkbox>
