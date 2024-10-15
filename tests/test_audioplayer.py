@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+from cleep.libs.tests import session
 import unittest
 import logging
 import sys
@@ -15,9 +16,10 @@ from cleep.exception import (
     Unauthorized,
     CommandInfo,
 )
-from cleep.libs.tests import session
-from mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock
+from cleep.libs.tests.common import get_log_level
 
+LOG_LEVEL = get_log_level()
 
 class GstreamerMsg:
     pass
@@ -30,7 +32,7 @@ class ParseUrlResult:
 class TestAudioplayer(unittest.TestCase):
     def setUp(self):
         logging.basicConfig(
-            level=logging.FATAL,
+            level=LOG_LEVEL,
             format=u"%(asctime)s %(name)s:%(lineno)d %(levelname)s : %(message)s",
         )
         self.session = session.TestSession(self)
@@ -38,8 +40,8 @@ class TestAudioplayer(unittest.TestCase):
     def tearDown(self):
         self.session.clean()
 
-    def init(self, start=True):
-        self.module = self.session.setup(Audioplayer)
+    def init(self, start=True, mock_on_stop=True):
+        self.module = self.session.setup(Audioplayer, mock_on_stop=mock_on_stop)
         if start:
             self.session.start_module(self.module)
 
@@ -51,7 +53,7 @@ class TestAudioplayer(unittest.TestCase):
             gstMock.init.assert_called_with(None)
 
     def test_on_stop(self):
-        self.init()
+        self.init(mock_on_stop=False)
         player = {
             "uuid": "the-uuid",
             "player": "player-stuff",
@@ -2593,7 +2595,7 @@ class TestAudioplayer(unittest.TestCase):
 class TestAudioplayerPlaybackUpdateEvent(unittest.TestCase):
     def setUp(self):
         logging.basicConfig(
-            level=logging.FATAL,
+            level=LOG_LEVEL,
             format="%(asctime)s %(name)s:%(lineno)d %(levelname)s : %(message)s",
         )
         self.session = session.TestSession(self)

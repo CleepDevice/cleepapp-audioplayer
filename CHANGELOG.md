@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## [UNRELEASED]
+## [1.3.0] - 2024-10-14
 ### Fixed
 - Fix documentation
 

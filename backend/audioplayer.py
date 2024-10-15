@@ -26,7 +26,7 @@ class Audioplayer(CleepModule):
     """
 
     MODULE_AUTHOR = "Cleep"
-    MODULE_VERSION = "1.2.0"
+    MODULE_VERSION = "1.3.0"
     MODULE_DEPS = []
     MODULE_DESCRIPTION = "Enjoy music playback"
     MODULE_LONGDESCRIPTION = (
@@ -153,6 +153,7 @@ class Audioplayer(CleepModule):
         players_to_delete = [
             player_uuid for player_uuid, player in self.players.items()
         ]
+        self.logger.debug('Players to delete: %s', players_to_delete)
         for player_uuid in players_to_delete:
             self.__destroy_player(self.players[player_uuid])
 
