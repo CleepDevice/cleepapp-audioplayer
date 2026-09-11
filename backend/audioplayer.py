@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 import os
 import random
+import time
+from pathlib import Path
 from urllib.parse import urlparse
 import gi
 
@@ -11,6 +13,7 @@ from gi.repository import Gst
 import magic
 from cleep.exception import (
     MissingParameter,
+    InvalidParameter,
     CommandError,
     CommandInfo,
 )
@@ -22,11 +25,12 @@ class Audioplayer(CleepModule):
     """
     Audioplayer application
 
-    This application create volatile audio player
+    Generic audio player based on GStreamer playbin.
+    Players stay alive while paused for fast resume; stop destroys the player.
     """
 
     MODULE_AUTHOR = "Cleep"
-    MODULE_VERSION = "1.3.0"
+    MODULE_VERSION = "1.4.0"
     MODULE_DEPS = []
     MODULE_DESCRIPTION = "Enjoy music playback"
     MODULE_LONGDESCRIPTION = (
@@ -36,6 +40,7 @@ class Audioplayer(CleepModule):
         "<li>Play local file and remote streams</li>"
         "<li>Read audio metadata when available</li>"
         "<li>Implement minimalist player playlist</li>"
+        "<li>Fade in/out support</li>"
         "<li>Propagate significative player events</li>"
         "</ul>"
     )
@@ -47,67 +52,29 @@ class Audioplayer(CleepModule):
     MODULE_URLBUGS = "https://github.com/CleepDevice/cleepapp-audioplayer/issues"
 
     MODULE_CONFIG_FILE = "audioplayer.conf"
-    DEFAULT_CONFIG = {}
-
-    # Audio pipelines description according to audio type (mime)
-    # Order matters: elements will be loaded as they are stored
-    AUDIO_PIPELINE_ELEMENTS = {
-        # MP3
-        "audio/mpeg": {
-            "tags": "id3demux",
-            "parser": "mpegaudioparse",
-            "decoder": "mpg123audiodec",
-            "converter": "audioconvert",
-            "gain": "rgvolume",
-            "converter2": "audioconvert",
-            "resampler": "audioresample",
-        },
-        # FLAC
-        "audio/flac": {
-            "parser": "flacparse",
-            "decoder": "flacdec",
-            "converter": "audioconvert",
-            "gain": "rgvolume",
-            "converter2": "audioconvert",
-            "resampler": "audioresample",
-        },
-        # OGG
-        "audio/ogg": {
-            "demux": "oggdemux",
-            "tags": "oggparse",
-            "decoder": "vorbisdec",
-            "converter": "audioconvert",
-            "gain": "rgvolume",
-            "converter2": "audioconvert",
-            "resampler": "audioresample",
-        },
-        # AAC
-        "audio/x-hx-aac-adts": {
-            "parser": "aacparse",
-            "decoder": "faad",
-            "converter": "audioconvert",
-            "gain": "rgvolume",
-            "converter2": "audioconvert",
-            "resampler": "audioresample",
-        },
-        "audio/x-hx-aac-adif": {
-            "parser": "aacparse",
-            "decoder": "faad",
-            "converter": "audioconvert",
-            "gain": "rgvolume",
-            "converter2": "audioconvert",
-            "resampler": "audioresample",
-        },
-        "audio/aac": {
-            "parser": "aacparse",
-            "decoder": "faad",
-            "converter": "audioconvert",
-            "gain": "rgvolume",
-            "converter2": "audioconvert",
-            "resampler": "audioresample",
-        },
+    DEFAULT_CONFIG = {
+        "audio_sink": "auto",  # auto | alsa
+        "alsa_device": "default",
+        "fade_in_ms": 0,
+        "fade_out_ms": 0,
     }
+
+    # Supported audio formats (mime). playbin decodes them; list is used for validation.
+    SUPPORTED_AUDIO_FORMATS = [
+        "audio/mpeg",
+        "audio/flac",
+        "audio/ogg",
+        "audio/x-hx-aac-adts",
+        "audio/x-hx-aac-adif",
+        "audio/aac",
+    ]
+    # Backward-compatible alias used by older callers/tests
+    AUDIO_PIPELINE_ELEMENTS = {fmt: True for fmt in SUPPORTED_AUDIO_FORMATS}
+
     MAX_PLAYLIST_TRACKS = 20
+
+    # playbin flags: AUDIO | SOFT_VOLUME (enables playbin volume property)
+    PLAYBIN_FLAGS = 0x00000002 | 0x00000010
 
     PLAYER_STATES = {
         Gst.State.VOID_PENDING: "stopped",
@@ -140,8 +107,6 @@ class Audioplayer(CleepModule):
     def _configure(self):
         """
         Configure module.
-        Use this function to configure your variables and local stuff that is not blocking.
-        At this time other applications are not started and all your command requests will fail.
         """
         Gst.init(None)
 
@@ -149,59 +114,19 @@ class Audioplayer(CleepModule):
         """
         Stop module
         """
-        # destroy all players
-        players_to_delete = [
-            player_uuid for player_uuid, player in self.players.items()
-        ]
-        self.logger.debug('Players to delete: %s', players_to_delete)
+        players_to_delete = list(self.players.keys())
+        self.logger.debug("Players to delete: %s", players_to_delete)
         for player_uuid in players_to_delete:
             self.__destroy_player(self.players[player_uuid])
 
-    def __prepare_player(self, player_uuid, source, audio_format):
-        """
-        Prepare player for playback
-
-        It returns existing pipeline if possible or create new one
-
-        Args:
-            player_uuid (string): existing player id
-            source (Gst.ElementFactory): gstreamer source element
-            audio_format (string): audio format (mime)
-
-        Returns:
-            player (dict): player as returned by __create_player
-        """
-        if player_uuid not in self.players:
-            raise Exception(f'Player "{player_uuid}" does not exist')
-
-        player = self.players[player_uuid]
-        self.__reset_player(player)
-        self.__build_pipeline(source, audio_format, player)
-
-        return player
-
     def __create_player(self):
         """
-        Create player structure
+        Create player structure with a ready playbin instance
 
         Returns:
-            dict: player structure::
-
-            {
-                uuid (string): player uuid
-                state (string): player state (see PLAYER_STATE_XXX)
-                player (Gst.Pipeline): direct access to pipeline (aka player) (default None)
-                playlist (dict): {
-                    current_index (number): current track (default None)
-                    tracks (list): list of tracks (default [])
-                }
-                source (Gst.ElementFactory): direct access to source element (default None)
-                volume (Gst.ElementFactory): direct access to volume element (default None)
-                pipeline (dict): all pipeline elements (default [])
-            }
-
+            dict: player structure
         """
-        return {
+        player = {
             "uuid": self._get_unique_id(),
             "playlist": {
                 "index": None,
@@ -213,53 +138,47 @@ class Audioplayer(CleepModule):
                 "metadata": None,
             },
             "player": None,
-            "source": None,
-            "volume": None,
-            "pipeline": [],
             "internal": {
                 "to_destroy": False,
                 "tags_sent": False,
                 "last_state": Gst.State.NULL,
+                "target_volume": 1.0,
+                "fade": None,
             },
         }
+        self.__create_playbin(player)
+        return player
 
-    # pylint: disable=R0201
-    def __reset_player(self, player):
+    def __create_playbin(self, player):
         """
-        Reset existing player deleting gstreamer pipeline elements and resetting some internals flags
+        Create and configure GStreamer playbin for player
 
         Args:
-            player (dict): structure as returned by __create_player
+            player (dict): player structure
         """
-        # make sure player is stopped
-        if player["player"]:
-            player["player"].set_state(Gst.State.NULL)
+        playbin = Gst.ElementFactory.make("playbin", player["uuid"])
+        if not playbin:
+            raise Exception("Unable to create GStreamer playbin")
 
-        # unlink pipeline elements
-        previous = None
-        for _, current in reversed(list(enumerate(player["pipeline"]))):
-            if not previous:
-                # last element linked to nothing, drop it
-                previous = current
-                continue
+        playbin.set_property("flags", self.PLAYBIN_FLAGS)
 
-            current.unlink(previous)
-            previous = current
+        audio_sink_name = self._get_config_field("audio_sink")
+        if audio_sink_name == "alsa":
+            audio_sink = Gst.ElementFactory.make("alsasink", "audio-sink")
+            if not audio_sink:
+                raise Exception("Unable to create alsasink")
+            audio_sink.set_property("device", self._get_config_field("alsa_device"))
+        else:
+            audio_sink = Gst.ElementFactory.make("autoaudiosink", "audio-sink")
+            if not audio_sink:
+                raise Exception("Unable to create autoaudiosink")
+        playbin.set_property("audio-sink", audio_sink)
 
-        # remove elements from pipeline
-        pipeline = player["player"]
-        for element in player["pipeline"]:
-            pipeline.remove(element)
+        video_sink = Gst.ElementFactory.make("fakesink", "video-sink")
+        if video_sink:
+            playbin.set_property("video-sink", video_sink)
 
-        # finally destroy pipeline and reset player
-        del pipeline
-        player["pipeline"].clear()
-        player["player"] = None
-        player["source"] = None
-        player["volume"] = None
-        player["playlist"]["metadata"] = None
-        player["internal"]["tags_sent"] = False
-        player["internal"]["last_state"] = Gst.State.NULL
+        player["player"] = playbin
 
     # pylint: disable=R0201
     def _destroy_player(self, player):
@@ -267,94 +186,121 @@ class Audioplayer(CleepModule):
         Set player destroy flag to True to perform safe player deletion during
         process loop
         """
+        player["internal"]["fade"] = None
         player["internal"]["to_destroy"] = True
 
-    # pylint: disable=R0201
     def __destroy_player(self, player):
         """
         Destroy player. This method should be exclusively used during app cycle life.
         """
-        self.__reset_player(player)
-        del self.players[player["uuid"]]
-
-    def __build_pipeline(self, source, audio_format, player):
-        """
-        Build player gstreamer pipeline
-
-        Args:
-            source (Gst.ElementFactory): gstreamer source element
-            audio_format (string): audio format (mime type)
-            player (dict): player structure as returned by __create_player
-        """
-        # create default mandatory elements
-        pipeline = Gst.Pipeline.new(player["uuid"])
-        progress = Gst.ElementFactory.make("progressreport", "progress")
-        progress.set_property("update-freq", 15)
-        progress.set_property("silent", True)
-        volume = Gst.ElementFactory.make("volume", "volume")
-        sink = Gst.ElementFactory.make("autoaudiosink", "sink")
-
-        # prepare player pipeline elements
-        self.logger.debug("Prepare player %s pipeline", player["uuid"])
-        elements = self.AUDIO_PIPELINE_ELEMENTS[audio_format]
-        player["pipeline"].append(source)
-        player["pipeline"].append(progress)
-        for (key, value) in elements.items():
-            element = Gst.ElementFactory.make(value, key)
-            if not element:
-                self.logger.error(
-                    'No gstreamer element created for "%s:%s"', key, value
-                )
-                raise Exception("Error configuring audio player")
-            player["pipeline"].append(element)
-        player["pipeline"].append(volume)
-        player["pipeline"].append(sink)
-
-        # build player pipeline
-        self.logger.trace(f'build player {player["uuid"]} pipeline')
-        previous_element = player["pipeline"][0]
-        pipeline.add(previous_element)
-        for current_element in player["pipeline"][1:]:
-            pipeline.add(current_element)
-            self.logger.trace(" - Link %s to %s", previous_element, current_element)
-            previous_element.link(current_element)
-            previous_element = current_element
-
-        # set player shortcuts
-        player["source"] = source
-        player["volume"] = volume
-        player["player"] = pipeline
+        player["internal"]["fade"] = None
+        if player["player"]:
+            player["player"].set_state(Gst.State.NULL)
+            player["player"] = None
+        if player["uuid"] in self.players:
+            del self.players[player["uuid"]]
 
     def _on_process(self):
         """
         On process
         """
+        self.__process_fades()
         self.__process_players_messages()
 
-        # destroy players
         players_to_delete = [
             player_uuid
             for player_uuid, player in self.players.items()
             if player["internal"]["to_destroy"]
         ]
-        if len(players_to_delete) > 0:
+        if players_to_delete:
             self.logger.debug("Players to delete: %s", players_to_delete)
             for player_uuid in players_to_delete:
-                self.__destroy_player(self.players[player_uuid])
+                if player_uuid in self.players:
+                    self.__destroy_player(self.players[player_uuid])
+
+    def __process_fades(self):
+        """
+        Advance active volume fades
+        """
+        now = time.monotonic()
+        for player_uuid, player in list(self.players.items()):
+            fade = player["internal"].get("fade")
+            if not fade or not player["player"]:
+                continue
+
+            duration_ms = max(fade["duration_ms"], 1)
+            progress = min(1.0, ((now - fade["started_at"]) * 1000.0) / duration_ms)
+            volume = fade["start"] + (fade["end"] - fade["start"]) * progress
+            try:
+                player["player"].set_property("volume", max(0.0, volume))
+            except Exception:
+                self.logger.exception(
+                    'Unable to apply fade volume on player "%s"', player_uuid
+                )
+                player["internal"]["fade"] = None
+                continue
+
+            if progress >= 1.0:
+                on_complete = fade.get("on_complete")
+                player["internal"]["fade"] = None
+                if on_complete:
+                    try:
+                        on_complete()
+                    except Exception:
+                        self.logger.exception(
+                            'Fade completion failed for player "%s"', player_uuid
+                        )
+
+    def __start_fade(self, player_uuid, start, end, duration_ms, on_complete=None):
+        """
+        Start volume fade on player
+
+        Args:
+            player_uuid (str): player identifier
+            start (float): start volume (0.0-1.0+)
+            end (float): end volume
+            duration_ms (int): fade duration in milliseconds
+            on_complete (callable): optional callback when fade ends
+        """
+        if duration_ms <= 0 or player_uuid not in self.players:
+            if on_complete:
+                on_complete()
+            return
+
+        player = self.players[player_uuid]
+        player["internal"]["fade"] = {
+            "start": start,
+            "end": end,
+            "duration_ms": duration_ms,
+            "started_at": time.monotonic(),
+            "on_complete": on_complete,
+        }
+        if player["player"]:
+            player["player"].set_property("volume", start)
+
+    def __cancel_fade(self, player_uuid):
+        """
+        Cancel active fade if any
+        """
+        if player_uuid in self.players:
+            self.players[player_uuid]["internal"]["fade"] = None
 
     def __process_players_messages(self):
         """
         Process all players messages
         """
-        for player_uuid, player in self.players.items():
+        for player_uuid, player in list(self.players.items()):
+            if not player["player"] or player["internal"]["to_destroy"]:
+                continue
             try:
-                message = player["player"].get_bus().pop()
+                bus = player["player"].get_bus()
+                message = bus.pop()
                 while message:
                     self.__process_gstreamer_message(
                         player_uuid, player["player"], message
                     )
                     del message
-                    message = player["player"].get_bus().pop()
+                    message = bus.pop()
             except Exception:
                 self.logger.exception(
                     'Error processing player "%s" messages', player_uuid
@@ -366,8 +312,8 @@ class Audioplayer(CleepModule):
 
         Args:
             player_uuid (string): player identifier
-            player (Gst.Pipeline): player
-            message (Gst.Message): message to proces
+            player (Gst.Element): playbin
+            message (Gst.Message): message to process
         """
         message_type = message.type
         self.logger.trace('Player "%s" received message: %s', player_uuid, message_type)
@@ -377,7 +323,9 @@ class Audioplayer(CleepModule):
             self.__play_next_track(player_uuid)
             self.__send_playback_event(player_uuid, player)
         elif message_type == Gst.MessageType.STATE_CHANGED:
-            self.__send_playback_event(player_uuid, player)
+            # only handle messages from playbin itself (src may be unset in tests)
+            if getattr(message, "src", None) in (None, player):
+                self.__send_playback_event(player_uuid, player)
         elif message_type == Gst.MessageType.ERROR:
             error, debug = message.parse_error()
             self.logger.error(
@@ -387,6 +335,7 @@ class Audioplayer(CleepModule):
             self.__send_playback_event(player_uuid, player)
         elif (
             message_type == Gst.MessageType.TAG
+            and player_uuid in self.players
             and not self.players[player_uuid]["internal"]["tags_sent"]
         ):
             tags = message.parse_tag()
@@ -408,10 +357,12 @@ class Audioplayer(CleepModule):
 
         Args:
             player_uuid (string): player identifier
-            player (Gst.Pipeline): player
+            player (Gst.Element): playbin
             force (bool): bypass excessive sending control
         """
-        # state
+        if player_uuid not in self.players:
+            return
+
         _, current_state, _ = player.get_state(1)
         if not force and current_state in (
             self.players[player_uuid]["internal"]["last_state"],
@@ -421,7 +372,6 @@ class Audioplayer(CleepModule):
         player_data = self.players[player_uuid]
         player_data["internal"]["last_state"] = current_state
 
-        # duration
         duration_true, duration = player.query_duration(Gst.Format.TIME)
         duration = int(duration / 1000000000) if duration_true else None
         if duration:
@@ -432,22 +382,7 @@ class Audioplayer(CleepModule):
 
     def __get_playback_info(self, player_uuid):
         """
-        Return current player playback info: playing track, track duration, player state...
-
-        Args:
-            player_uuid (string): player identifier
-
-        Returns:
-            dict: current player info::
-
-            {
-                playeruuid (string): player identifier
-                track (dict): current track
-                metadata (dict): current track metadata
-                state (Gst.State): player state
-                duration (number): track duration (in seconds)
-            }
-
+        Return current player playback info
         """
         if player_uuid not in self.players:
             return {
@@ -460,10 +395,15 @@ class Audioplayer(CleepModule):
             }
 
         player = self.players[player_uuid]
+        index = player["playlist"]["index"]
+        track = None
+        if index is not None and 0 <= index < len(player["playlist"]["tracks"]):
+            track = player["playlist"]["tracks"][index]
+
         return {
-            "index": player["playlist"]["index"],
+            "index": index,
             "playeruuid": player_uuid,
-            "track": player["playlist"]["tracks"][player["playlist"]["index"]],
+            "track": track,
             "metadata": player["playlist"]["metadata"],
             "state": self._get_player_state(player["internal"]["last_state"]),
             "duration": player["playlist"]["duration"],
@@ -472,18 +412,6 @@ class Audioplayer(CleepModule):
     def __get_audio_metadata(self, tags):
         """
         Get audio tags from message
-
-        Args:
-            tags (Gst.TagList): tag list
-
-        Returns:
-            tuple: audio metadata::
-
-            (
-                bool: metadata is complete
-                dict: list of tags in usable format
-            )
-
         """
         metadata = {
             "album": None,
@@ -539,35 +467,29 @@ class Audioplayer(CleepModule):
 
     def __get_file_audio_format(self, filepath):
         """
-        Return file audio format
-
-        Args:
-            filepath (string): full file path
-
-        Returns:
-            string: if audio format is supported (mime type)
-            None: if audio format is not supported
+        Return file audio format if supported
         """
         try:
             mime = magic.from_file(filepath, mime=True)
-            return mime if mime in list(self.AUDIO_PIPELINE_ELEMENTS.keys()) else None
+            return mime if mime in self.SUPPORTED_AUDIO_FORMATS else None
         except Exception:
             self.logger.exception("Error getting file format")
             return None
+
+    def __is_supported_audio_format(self, audio_format):
+        """
+        Return True if audio format is supported (None allowed)
+        """
+        return audio_format is None or audio_format in self.SUPPORTED_AUDIO_FORMATS
 
     @staticmethod
     def _is_filepath(resource):
         """
         Return True if resource is a filepath
-
-        Returns:
-            bool: True if url, False otherwise
         """
         if os.path.exists(resource):
-            # it's a local file
             return True
 
-        # make sure resource is a valid url
         if urlparse(resource).scheme in ("http", "https"):
             return False
 
@@ -577,41 +499,67 @@ class Audioplayer(CleepModule):
     def _make_track(resource, audio_format):
         """
         Create track dict
-
-        Returns:
-            dict: track object::
-
-            {
-                resource (string): audio resource (file or url)
-                audio_format (string): resource format (mime)
-            }
-
         """
         return {
             "resource": resource,
             "audio_format": audio_format,
         }
 
+    def __resource_to_uri(self, resource):
+        """
+        Convert resource path/url to playbin URI
+        """
+        if Audioplayer._is_filepath(resource):
+            return Path(os.path.abspath(resource)).as_uri()
+        return resource
+
+    def _set_audio_sink(self, audio_sink, alsa_device=None):
+        """
+        Internal helper to configure audio sink used by new players.
+        Not exposed as a public command: hardware apps will drive this later.
+
+        Args:
+            audio_sink (str): "auto" or "alsa"
+            alsa_device (str): ALSA device name when audio_sink is alsa
+        """
+        if audio_sink not in ("auto", "alsa"):
+            raise InvalidParameter('Audio sink must be "auto" or "alsa"')
+        self._set_config_field("audio_sink", audio_sink)
+        if alsa_device is not None:
+            self._set_config_field("alsa_device", alsa_device)
+
+    def set_fade(self, fade_in_ms, fade_out_ms):
+        """
+        Configure default fade durations
+
+        Args:
+            fade_in_ms (int): fade-in duration in milliseconds (0 disables)
+            fade_out_ms (int): fade-out duration in milliseconds (0 disables)
+        """
+        self._check_parameters(
+            [
+                {
+                    "name": "fade_in_ms",
+                    "value": fade_in_ms,
+                    "type": int,
+                    "validator": lambda v: v >= 0,
+                    "message": "fade_in_ms must be >= 0",
+                },
+                {
+                    "name": "fade_out_ms",
+                    "value": fade_out_ms,
+                    "type": int,
+                    "validator": lambda v: v >= 0,
+                    "message": "fade_out_ms must be >= 0",
+                },
+            ]
+        )
+        self._set_config_field("fade_in_ms", fade_in_ms)
+        self._set_config_field("fade_out_ms", fade_out_ms)
+
     def add_track(self, player_uuid, resource, audio_format=None, track_index=None):
         """
         Add track in specified player playlist.
-
-        Note:
-            A player with no audio resource in playlist is destroyed so take care to call this command before current audio
-            resource playing is terminated.
-
-        Args:
-            player_uuid (str): player identifier returned by play command
-            resource (str): local filepath or url
-            audio_format (str, optional): audio format (mime). Mandatory if resource is an url. Defaults to None.
-            track_index (number, optional): add new track to specified playlist position or at end of playlist. Defaults to None.
-
-        Returns:
-            bool: True if track added successfully, False if max playlist tracks reached
-
-        Raises:
-            CommandError: if player does not exist
-            MissingParameter: if parameters are missing
         """
         self._check_parameters(
             [
@@ -628,7 +576,7 @@ class Audioplayer(CleepModule):
                     "value": audio_format,
                     "type": str,
                     "none": True,
-                    "validator": lambda v: v in self.AUDIO_PIPELINE_ELEMENTS,
+                    "validator": self.__is_supported_audio_format,
                     "message": f'Audio format "{audio_format}" is not supported',
                 },
                 {
@@ -655,8 +603,10 @@ class Audioplayer(CleepModule):
             track_index,
         )
         track = Audioplayer._make_track(resource, audio_format)
-        track_index = track_index or len(
-            self.players[player_uuid]["playlist"]["tracks"]
+        track_index = (
+            track_index
+            if track_index is not None
+            else len(self.players[player_uuid]["playlist"]["tracks"])
         )
         self.players[player_uuid]["playlist"]["tracks"].insert(track_index, track)
         self.logger.debug(
@@ -670,23 +620,6 @@ class Audioplayer(CleepModule):
     def add_tracks(self, player_uuid, tracks):
         """
         Add multiple tracks at once
-
-        Args:
-            player_uuid (str): player identifier
-            tracks (list): list of tracks::
-
-                [
-                    {
-                        resource (string): local filepath or url
-                        audio_format (string): audio format (mime). Mandatory if resource is an url, can be None if local file.
-                    },
-                    ...
-                ]
-
-        Raises:
-            CommandError: if player does not exist
-            MissingParameter: if parameters are missing
-            InvalidParameter: if command parameters are invalid
         """
         self._check_parameters([{"name": "tracks", "value": tracks, "type": list}])
 
@@ -699,10 +632,6 @@ class Audioplayer(CleepModule):
     def remove_track(self, player_uuid, track_index):
         """
         Remove track from player playlist
-
-        Args:
-            player_uuid (string): player identifier
-            track_index (int): track index (0 is the first playlist track)
         """
         self._check_parameters(
             [
@@ -750,14 +679,6 @@ class Audioplayer(CleepModule):
         """
         Create a player and start playing specified resource
 
-        Args:
-            resource (str): local filepath or url
-            audio_format (str, optional): audio format (mime). Mandatory if resource is an url. Defaults to None.
-            volume (int, optional): player volume. Defaults to 100.
-            paused (bool, optional): start playback paused. Useful to create player instance in silently. Defaults to False.
-            repeat (bool, optional): enable repeat. Defaults to False.
-            shuffle (bool, optional): True to shuffle playlist at end of it. Defaults to False.
-
         Returns:
             string: player identifier
         """
@@ -769,8 +690,8 @@ class Audioplayer(CleepModule):
                     "value": audio_format,
                     "type": str,
                     "none": True,
-                    "validator": lambda v: v in self.AUDIO_PIPELINE_ELEMENTS,
-                    "message": f"Audio format {audio_format}is not supported",
+                    "validator": self.__is_supported_audio_format,
+                    "message": f"Audio format {audio_format} is not supported",
                 },
                 {
                     "name": "volume",
@@ -804,41 +725,59 @@ class Audioplayer(CleepModule):
 
     def __play_track(self, track, player_uuid, volume=None, paused=False):
         """
-        Play audio stream to
-
-        Args:
-            track (dict): track object
-            player_uuid (string): player identifier
-            volume (int): player volume
-            paused (bool): start playback paused
+        Play track on existing playbin (reuses playbin, only changes URI)
         """
-        # prepare player
+        if player_uuid not in self.players:
+            raise CommandError(f'Player "{player_uuid}" does not exist')
+
+        player = self.players[player_uuid]
+        playbin = player["player"]
+        if not playbin:
+            self.__create_playbin(player)
+            playbin = player["player"]
+
+        self.__cancel_fade(player_uuid)
+
         if Audioplayer._is_filepath(track["resource"]):
             audio_format = self.__get_file_audio_format(track["resource"])
             if not audio_format:
                 raise CommandError("Audio file not supported")
             track["audio_format"] = audio_format
-            source = Gst.ElementFactory.make("filesrc", "source")
-        else:
-            source = Gst.ElementFactory.make("souphttpsrc", "source")
-        player = self.__prepare_player(player_uuid, source, track["audio_format"])
 
         try:
-            # configure player
-            player["source"].set_property("location", track["resource"])
-            volume = volume or self.players[player_uuid]["playlist"]["volume"]
-            if volume is not None:
-                player["volume"].set_property("volume", float(volume / 100.0))
+            playbin.set_state(Gst.State.NULL)
 
-            # start playback
-            state = Gst.State.PAUSED if paused else Gst.State.PLAYING
-            player["player"].set_state(state)
-            self.logger.info(
-                'Player "%s" %s %s',
-                player_uuid,
-                "created for" if paused else "is playing",
-                track,
-            )
+            uri = self.__resource_to_uri(track["resource"])
+            playbin.set_property("uri", uri)
+
+            volume = volume if volume is not None else player["playlist"]["volume"]
+            target_volume = float(volume / 100.0)
+            player["internal"]["target_volume"] = target_volume
+            player["playlist"]["volume"] = volume
+            player["playlist"]["metadata"] = None
+            player["internal"]["tags_sent"] = False
+            player["playlist"]["duration"] = None
+            player["internal"]["last_state"] = Gst.State.NULL
+
+            fade_in_ms = self._get_config_field("fade_in_ms")
+            if paused:
+                playbin.set_property("volume", target_volume)
+                playbin.set_state(Gst.State.PAUSED)
+                player["internal"]["last_state"] = Gst.State.PAUSED
+                self.logger.info(
+                    'Player "%s" created paused for %s', player_uuid, track
+                )
+            elif fade_in_ms > 0:
+                playbin.set_property("volume", 0.0)
+                playbin.set_state(Gst.State.PLAYING)
+                player["internal"]["last_state"] = Gst.State.PLAYING
+                self.__start_fade(player_uuid, 0.0, target_volume, fade_in_ms)
+                self.logger.info('Player "%s" is playing %s (fade-in)', player_uuid, track)
+            else:
+                playbin.set_property("volume", target_volume)
+                playbin.set_state(Gst.State.PLAYING)
+                player["internal"]["last_state"] = Gst.State.PLAYING
+                self.logger.info('Player "%s" is playing %s', player_uuid, track)
         except Exception as error:
             self.logger.exception("Error playing track %s with %s", track, player_uuid)
             raise error
@@ -846,13 +785,6 @@ class Audioplayer(CleepModule):
     def _get_track_index(self, player_uuid, track):
         """
         Search track index in player playlist
-
-        Args:
-            player_uuid (string): player identifier
-            track (dict): track data
-
-        Returns:
-            number: track playlist index
         """
         return next(
             (
@@ -870,15 +802,7 @@ class Audioplayer(CleepModule):
     ):
         """
         Toggle pause status for specified player.
-
-        Args:
-            player_uuid (string): player identifier
-            force_pause (bool, optional): force pause. Defaults to False.
-            force_play (bool, optional): force play. If both force_pause and force_play are True it toggles current state. Defaults to False.
-            volume (int, optional): if specified set player volume. Defaults to None.
-
-        Returns:
-            string: player state as describe in PLAYER_STATES
+        Player stays alive: resume is fast (no playbin rebuild).
         """
         self._check_parameters(
             [
@@ -906,33 +830,60 @@ class Audioplayer(CleepModule):
             self._set_volume(player_uuid, volume)
 
         player = self.players[player_uuid]
+        playbin = player["player"]
         new_state = Gst.State.PAUSED if force_pause else Gst.State.PLAYING
         if (force_pause and force_play) or (not force_pause and not force_play):
-            _, current_state, _ = player["player"].get_state(1)
+            _, current_state, _ = playbin.get_state(1)
             self.logger.debug(
-                "Change player %s state to %s", player_uuid, current_state
+                "Change player %s state from %s", player_uuid, current_state
             )
             new_state = (
                 Gst.State.PAUSED
                 if current_state == Gst.State.PLAYING
                 else Gst.State.PLAYING
             )
-        player["player"].set_state(new_state)
 
+        self.__cancel_fade(player_uuid)
+        fade_in_ms = self._get_config_field("fade_in_ms")
+        fade_out_ms = self._get_config_field("fade_out_ms")
+        target_volume = player["internal"].get("target_volume", 1.0)
+
+        if new_state == Gst.State.PAUSED and fade_out_ms > 0:
+            current_volume = playbin.get_property("volume")
+
+            def on_fade_out_done():
+                if player_uuid not in self.players:
+                    return
+                self.players[player_uuid]["player"].set_state(Gst.State.PAUSED)
+                self.players[player_uuid]["player"].set_property(
+                    "volume", target_volume
+                )
+                self.players[player_uuid]["internal"]["last_state"] = Gst.State.PAUSED
+
+            self.__start_fade(
+                player_uuid,
+                current_volume,
+                0.0,
+                fade_out_ms,
+                on_complete=on_fade_out_done,
+            )
+            return self._get_player_state(Gst.State.PAUSED)
+
+        if new_state == Gst.State.PLAYING and fade_in_ms > 0:
+            playbin.set_property("volume", 0.0)
+            playbin.set_state(Gst.State.PLAYING)
+            player["internal"]["last_state"] = Gst.State.PLAYING
+            self.__start_fade(player_uuid, 0.0, target_volume, fade_in_ms)
+            return self._get_player_state(Gst.State.PLAYING)
+
+        playbin.set_state(new_state)
+        player["internal"]["last_state"] = new_state
         return self._get_player_state(new_state)
 
     def stop_playback(self, player_uuid):
         """
         Stop specified player playback and destroy player.
-        The player will not be available anymore after the stop command, the playlist is also deleted.
-        You need to call play command to create new player.
-        If you want to keep player alive, prefer using pause command.
-
-        Args:
-            player_uuid (string): player identifier
-
-        Raises:
-            CommandError: if player does not exist
+        Prefer pause_playback to keep player alive for fast resume.
         """
         self._check_parameters(
             [
@@ -946,33 +897,38 @@ class Audioplayer(CleepModule):
             ]
         )
 
-        self.players[player_uuid]["player"].set_state(Gst.State.NULL)
-        self._destroy_player(self.players[player_uuid])
+        fade_out_ms = self._get_config_field("fade_out_ms")
+        player = self.players[player_uuid]
+        playbin = player["player"]
 
-        playback_info = self.__get_playback_info(player_uuid)
-        self.logger.debug('Playback info for "%s": %s', player_uuid, playback_info)
-        self.event_playback_update.send(
-            {
-                "playeruuid": player_uuid,
-                "state": self._get_player_state(Gst.State.NULL),
-            }
-        )
+        def do_stop():
+            if player_uuid not in self.players:
+                return
+            self.players[player_uuid]["player"].set_state(Gst.State.NULL)
+            self._destroy_player(self.players[player_uuid])
+            self.event_playback_update.send(
+                {
+                    "playeruuid": player_uuid,
+                    "state": self._get_player_state(Gst.State.NULL),
+                }
+            )
+
+        self.__cancel_fade(player_uuid)
+        if fade_out_ms > 0 and playbin:
+            current_volume = playbin.get_property("volume")
+            self.__start_fade(
+                player_uuid,
+                current_volume,
+                0.0,
+                fade_out_ms,
+                on_complete=do_stop,
+            )
+        else:
+            do_stop()
 
     def play_next_track(self, player_uuid):
         """
         Play next track in specified player playlist
-
-        If there is no next track in playlist, current player playback is stopped and player is destroyed.
-        You will need to call play command again to create new player.
-
-        Args:
-            player_uuid (string): player identifier
-
-        Returns:
-            bool: True if next track playback succeed, False otherwise
-
-        Raises:
-            CommandError: if player does not exist
         """
         self._check_parameters(
             [
@@ -1000,12 +956,6 @@ class Audioplayer(CleepModule):
     def __play_next_track(self, player_uuid):
         """
         Play next resource if any
-
-        Args:
-            player_uuid (string): player uuid
-
-        Returns:
-            bool: True if next track playback succeed, False otherwise
         """
         if player_uuid not in self.players:
             return False
@@ -1013,7 +963,6 @@ class Audioplayer(CleepModule):
         if playlist["index"] + 1 >= len(playlist["tracks"]):
             return self.__handle_end_of_playlist(player_uuid)
 
-        # update playlist
         playlist["index"] += 1
         playlist["duration"] = None
         next_track = playlist["tracks"][playlist["index"]]
@@ -1031,16 +980,9 @@ class Audioplayer(CleepModule):
     def __handle_end_of_playlist(self, player_uuid):
         """
         Handle end of playlist according to player configuration
-
-        Args:
-            player_uuid (string): player identifier
-
-        Returns:
-            bool: True if playback continues, False otherwise
         """
         playlist = self.players[player_uuid]["playlist"]
         if playlist["repeat"]:
-            # restart playlist
             if playlist["shuffle"]:
                 self.shuffle_playlist(player_uuid)
             playlist["index"] = 0
@@ -1050,7 +992,6 @@ class Audioplayer(CleepModule):
             self.logger.debug('Player "%s" restarts playlist', player_uuid)
             return True
 
-        # no more track to play, destroy player
         self.logger.debug(
             'Player "%s" has no more tracks in playlist, destroy it', player_uuid
         )
@@ -1060,16 +1001,6 @@ class Audioplayer(CleepModule):
     def play_previous_track(self, player_uuid):
         """
         Play previous track in specified player playlist
-        If there is no previous track, current playback is restarted
-
-        Args:
-            player_uuid (string): player identifier
-
-        Returns:
-            bool: True if previous track played successfully, False otherwise
-
-        Raises:
-            CommandError: if command failed
         """
         self._check_parameters(
             [
@@ -1101,13 +1032,6 @@ class Audioplayer(CleepModule):
     def play_track(self, player_uuid, track_index):
         """
         Play track at specified index
-
-        Args:
-            player_uuid (string): player identifier
-            track_index (int): track index
-
-        Returns:
-            bool: True if playback started for specified track index, False otherwise
         """
         if player_uuid not in self.players:
             self.logger.warning("Cant play track: player %s does not exist", player_uuid)
@@ -1123,7 +1047,6 @@ class Audioplayer(CleepModule):
             )
             return False
 
-        # update playlist
         playlist["index"] = track_index
         playlist["duration"] = None
         next_track = playlist["tracks"][playlist["index"]]
@@ -1143,19 +1066,6 @@ class Audioplayer(CleepModule):
     def get_players(self):
         """
         Return list of players
-
-        Returns:
-            list: list of players with current playback info::
-
-            {
-                playeruuid (string): player identifier
-                playback (dict): current track
-                    {
-                        resource (string): file/url
-                        audio_format (string): file format
-                    }
-                state (Gst.State): player state
-                volume (int): player volume
         """
         return [
             self.__get_playback_info(player["uuid"]) for player in self.players.values()
@@ -1164,18 +1074,6 @@ class Audioplayer(CleepModule):
     def get_playlist(self, player_uuid):
         """
         Return player playlist
-
-        Args:
-            player_uuid (string): player identifier
-
-        Returns:
-            dict: current playlist::
-
-            {
-                tracks (list): list of tracks
-                current_index (number): current track index (0 is the first playlist track)
-            }
-
         """
         self._check_parameters(
             [
@@ -1194,10 +1092,6 @@ class Audioplayer(CleepModule):
     def set_volume(self, player_uuid, volume):
         """
         Set player volume
-
-        Args:
-            player_uuid (string): player identifier
-            volume (number): percentage volume
         """
         self._check_parameters(
             [
@@ -1223,29 +1117,19 @@ class Audioplayer(CleepModule):
 
     def _set_volume(self, player_uuid, volume):
         """
-        Set player volume
-
-        Args:
-            player_uuid (string): player identifier
-            volume (int): volume to set
+        Set player volume on playbin
         """
         self.logger.debug("Set player %s volume to %s", player_uuid, volume)
-        self.players[player_uuid]["volume"].set_property(
-            "volume", float(volume / 100.0)
-        )
+        self.__cancel_fade(player_uuid)
+        target = float(volume / 100.0)
+        self.players[player_uuid]["internal"]["target_volume"] = target
         self.players[player_uuid]["playlist"]["volume"] = volume
+        if self.players[player_uuid]["player"]:
+            self.players[player_uuid]["player"].set_property("volume", target)
 
     def set_repeat(self, player_uuid, repeat, shuffle=False):
         """
         Repeat playlist when end of it is reached
-
-        Args:
-            player_uuid (string): player identifier
-            repeat (bool): True to repeat playlist, False otherwise
-            shuffle (bool, optional): True to shuffle playlist when end is reached. Defaults to False.
-
-        Raises:
-            CommandError: if player does not exist
         """
         self._check_parameters(
             [
@@ -1277,9 +1161,6 @@ class Audioplayer(CleepModule):
     def shuffle_playlist(self, player_uuid):
         """
         Shuffle playlist
-
-        Args:
-            player_uuid (string): player identifier
         """
         if player_uuid not in self.players:
             raise CommandError(f'Player "{player_uuid}" does not exist')
@@ -1293,11 +1174,5 @@ class Audioplayer(CleepModule):
     def _get_player_state(self, gst_state):
         """
         Return human readable player state
-
-        Args:
-            gst_state (Gst.State): gstreamer player state
-
-        Returns:
-            string: player state as returned by PLAYER_STATES
         """
         return self.PLAYER_STATES[gst_state]

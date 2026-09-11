@@ -11,10 +11,12 @@ This application implements a generic audio player to allow your device to play 
 * A playlist per player is created
 * Individual player volume control
 * Usual player controls are implemented (play, pause, stop, next, previous)
+* Pause keeps the player alive for fast resume (stop destroys it)
+* Optional fade-in / fade-out
 
 ### Supported formats
 
-Mp3, ogg, aac and flac formats are supported but technically other formats can be supported thanks to Gstreamer that is used internally.
+Mp3, ogg, aac and flac formats are supported through GStreamer playbin.
 For more information take a look at [Gstreamer](https://gstreamer.freedesktop.org/) website.
 
 ### Audio metadata

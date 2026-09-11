@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## [1.4.0] - 2026-09-11
+### Changed
+- Replace manual GStreamer pipelines with playbin (simpler internals, format auto-detection)
+- Reuse playbin instance across tracks and pause/resume for faster playback resume
+
+### Added
+- Configurable fade-in / fade-out durations (`set_fade` command)
+- Internal audio sink selection (auto/alsa) for future hardware app integration
+
 ## [1.3.0] - 2024-10-14
 ### Fixed
 - Fix documentation

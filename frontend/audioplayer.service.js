@@ -67,6 +67,13 @@ function($rootScope, rpcService) {
         });
     };
 
+    self.setFade = function(fadeInMs, fadeOutMs) {
+        return rpcService.sendCommand('set_fade', 'audioplayer', {
+            fade_in_ms: fadeInMs,
+            fade_out_ms: fadeOutMs,
+        });
+    };
+
     self.shufflePlaylist = function(playerId, repeat) {
         return rpcService.sendCommand('shuffle_playlist', 'audioplayer', {
             player_uuid: playerId,

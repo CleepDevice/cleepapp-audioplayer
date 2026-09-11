@@ -1,5 +1,15 @@
 <div layout="column" layout-padding ng-cloak>
 
+    <config-section cl-title="Fades"></config-section>
+    <config-number
+        cl-title="Fade in (ms)" cl-model="$ctrl.fadeInMs" cl-min="0"
+        cl-click="$ctrl.saveFade()"
+    ></config-number>
+    <config-number
+        cl-title="Fade out (ms)" cl-model="$ctrl.fadeOutMs" cl-min="0"
+        cl-click="$ctrl.saveFade()"
+    ></config-number>
+
     <config-section cl-title="Create player"></config-section>
     <config-text
         cl-title="Stream url" cl-model="$ctrl.url"
@@ -19,4 +29,3 @@
     ></config-list>
 
 </div>
-    

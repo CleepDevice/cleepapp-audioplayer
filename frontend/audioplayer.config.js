@@ -1,7 +1,6 @@
 /**
  * Audioplayer config component
  * Handle audioplayer application configuration
- * If your application doesn't need configuration page, delete this file and its references into desc.json
  */
 angular
 .module('Cleep')
@@ -25,8 +24,11 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
         self.repeat = false;
         self.playerIndex = null;
         self.players = [];
+        self.fadeInMs = 0;
+        self.fadeOutMs = 0;
 
         self.$onInit = function() {
+            cleepService.getModuleConfig('audioplayer');
             audioplayerService.refreshPlayers();
             self.playerControls = [
                 { icon: 'skip-previous', tooltip: 'Play previous track', click: self.previous },
@@ -34,6 +36,17 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
                 { icon: 'stop', tooltip: 'Stop playback', click: self.stop },
                 { icon: 'skip-next', tooltip: 'Play next track', click: self.next },
             ];
+        };
+
+        self.saveFade = function() {
+            audioplayerService.setFade(Number(self.fadeInMs) || 0, Number(self.fadeOutMs) || 0)
+                .then((response) => {
+                    if (response && response.error) {
+                        toastService.error('Unable to save fade settings');
+                        return;
+                    }
+                    cleepService.reloadModuleConfig('audioplayer');
+                });
         };
 
         self.play = function() {
@@ -159,6 +172,18 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
             (players) => {
                 self.parsePlayers(players);
             }
+        );
+
+        $scope.$watch(
+            () => cleepService.modules['audioplayer'] && cleepService.modules['audioplayer'].config,
+            (config) => {
+                if (!config) {
+                    return;
+                }
+                self.fadeInMs = config.fade_in_ms || 0;
+                self.fadeOutMs = config.fade_out_ms || 0;
+            },
+            true
         );
     };
 
