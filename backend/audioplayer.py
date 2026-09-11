@@ -144,6 +144,7 @@ class Audioplayer(CleepModule):
                 "last_state": Gst.State.NULL,
                 "target_volume": 1.0,
                 "fade": None,
+                "position": None,
             },
         }
         self.__create_playbin(player)
@@ -797,12 +798,196 @@ class Audioplayer(CleepModule):
             0,
         )
 
+    def __get_position_ns(self, playbin):
+        """
+        Return current playback position in nanoseconds, or None
+        """
+        if not playbin:
+            return None
+        try:
+            success, position = playbin.query_position(Gst.Format.TIME)
+            if success is True and isinstance(position, (int, float)) and position >= 0:
+                return int(position)
+        except Exception:
+            self.logger.exception("Unable to query playback position")
+        return None
+
+    def __seek_ns(self, playbin, position_ns):
+        """
+        Seek playbin to position in nanoseconds
+        """
+        if not playbin or position_ns is None or position_ns <= 0:
+            return False
+        try:
+            return bool(
+                playbin.seek_simple(
+                    Gst.Format.TIME,
+                    Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT,
+                    int(position_ns),
+                )
+            )
+        except Exception:
+            self.logger.exception("Unable to seek to position %s", position_ns)
+            return False
+
+    def __try_set_state(self, playbin, state, timeout_ns=None):
+        """
+        Set playbin state and wait for completion.
+
+        Returns:
+            bool: True if state change looks successful, False otherwise
+        """
+        if not playbin:
+            return False
+        if timeout_ns is None:
+            timeout_ns = 2 * Gst.SECOND
+
+        try:
+            ret = playbin.set_state(state)
+        except Exception:
+            self.logger.exception("Unable to set player state to %s", state)
+            return False
+
+        if ret == Gst.StateChangeReturn.FAILURE:
+            return False
+
+        try:
+            wait_ret, current, pending = playbin.get_state(timeout_ns)
+        except Exception:
+            self.logger.exception("Unable to wait for player state %s", state)
+            return False
+
+        if wait_ret == Gst.StateChangeReturn.FAILURE:
+            return False
+        if current == state or pending == state:
+            return True
+        # Stuck in NULL/READY while requesting PLAYING/PAUSED => failure
+        if current in (Gst.State.NULL, Gst.State.READY) and state in (
+            Gst.State.PAUSED,
+            Gst.State.PLAYING,
+        ):
+            return False
+        # set_state did not report FAILURE; accept transitional/async cases
+        return ret != Gst.StateChangeReturn.FAILURE
+
+    def __recreate_playback(self, player_uuid, playing=True):
+        """
+        Recreate playbin and restore current track/position after a failed resume.
+        """
+        if player_uuid not in self.players:
+            raise CommandError(f'Player "{player_uuid}" does not exist')
+
+        player = self.players[player_uuid]
+        self.__cancel_fade(player_uuid)
+
+        position = player["internal"].get("position")
+        if position is None:
+            position = self.__get_position_ns(player.get("player"))
+
+        index = player["playlist"]["index"]
+        tracks = player["playlist"]["tracks"]
+        if index is None or not tracks or index < 0 or index >= len(tracks):
+            raise CommandError("Unable to recreate playback: invalid playlist state")
+
+        track = tracks[index]
+        volume = player["playlist"].get("volume") or 100
+
+        self.logger.warning(
+            'Recreating playbin for player "%s" (playing=%s, position=%s)',
+            player_uuid,
+            playing,
+            position,
+        )
+
+        old_playbin = player.get("player")
+        if old_playbin:
+            try:
+                old_playbin.set_state(Gst.State.NULL)
+            except Exception:
+                self.logger.exception(
+                    'Unable to stop old playbin before recreate for "%s"', player_uuid
+                )
+        player["player"] = None
+        self.__create_playbin(player)
+
+        # Reload current track paused, restore position, then optionally play
+        self.__play_track(track, player_uuid, volume=volume, paused=True)
+        if position:
+            self.__seek_ns(player["player"], position)
+        player["internal"]["position"] = position
+
+        if not playing:
+            player["internal"]["last_state"] = Gst.State.PAUSED
+            return self._get_player_state(Gst.State.PAUSED)
+
+        target_volume = player["internal"].get("target_volume", float(volume / 100.0))
+        fade_in_ms = self._get_config_field("fade_in_ms")
+        playbin = player["player"]
+        if fade_in_ms > 0:
+            playbin.set_property("volume", 0.0)
+            if not self.__try_set_state(playbin, Gst.State.PLAYING):
+                raise CommandError("Unable to recreate playback")
+            player["internal"]["last_state"] = Gst.State.PLAYING
+            self.__start_fade(player_uuid, 0.0, target_volume, fade_in_ms)
+            return self._get_player_state(Gst.State.PLAYING)
+
+        playbin.set_property("volume", target_volume)
+        if not self.__try_set_state(playbin, Gst.State.PLAYING):
+            raise CommandError("Unable to recreate playback")
+        player["internal"]["last_state"] = Gst.State.PLAYING
+        return self._get_player_state(Gst.State.PLAYING)
+
+    def __resume_playback(self, player_uuid):
+        """
+        Resume paused playback. Recreate playbin automatically if resume fails.
+        """
+        player = self.players[player_uuid]
+        playbin = player.get("player")
+        if not playbin:
+            return self.__recreate_playback(player_uuid, playing=True)
+
+        # Keep latest position before attempting resume
+        position = self.__get_position_ns(playbin)
+        if position is not None:
+            player["internal"]["position"] = position
+
+        fade_in_ms = self._get_config_field("fade_in_ms")
+        target_volume = player["internal"].get("target_volume", 1.0)
+
+        if fade_in_ms > 0:
+            try:
+                playbin.set_property("volume", 0.0)
+            except Exception:
+                self.logger.exception(
+                    'Unable to prepare fade-in on player "%s"', player_uuid
+                )
+                return self.__recreate_playback(player_uuid, playing=True)
+            if not self.__try_set_state(playbin, Gst.State.PLAYING):
+                self.logger.warning(
+                    'Resume with fade-in failed for player "%s", recreating',
+                    player_uuid,
+                )
+                return self.__recreate_playback(player_uuid, playing=True)
+            player["internal"]["last_state"] = Gst.State.PLAYING
+            self.__start_fade(player_uuid, 0.0, target_volume, fade_in_ms)
+            return self._get_player_state(Gst.State.PLAYING)
+
+        if not self.__try_set_state(playbin, Gst.State.PLAYING):
+            self.logger.warning(
+                'Resume failed for player "%s", recreating playbin', player_uuid
+            )
+            return self.__recreate_playback(player_uuid, playing=True)
+
+        player["internal"]["last_state"] = Gst.State.PLAYING
+        return self._get_player_state(Gst.State.PLAYING)
+
     def pause_playback(
         self, player_uuid, force_pause=False, force_play=False, volume=None
     ):
         """
         Toggle pause status for specified player.
         Player stays alive: resume is fast (no playbin rebuild).
+        If resume fails, playbin is automatically recreated and position restored.
         """
         self._check_parameters(
             [
@@ -833,7 +1018,10 @@ class Audioplayer(CleepModule):
         playbin = player["player"]
         new_state = Gst.State.PAUSED if force_pause else Gst.State.PLAYING
         if (force_pause and force_play) or (not force_pause and not force_play):
-            _, current_state, _ = playbin.get_state(1)
+            if playbin:
+                _, current_state, _ = playbin.get_state(1)
+            else:
+                current_state = player["internal"].get("last_state", Gst.State.NULL)
             self.logger.debug(
                 "Change player %s state from %s", player_uuid, current_state
             )
@@ -844,20 +1032,33 @@ class Audioplayer(CleepModule):
             )
 
         self.__cancel_fade(player_uuid)
-        fade_in_ms = self._get_config_field("fade_in_ms")
         fade_out_ms = self._get_config_field("fade_out_ms")
         target_volume = player["internal"].get("target_volume", 1.0)
 
-        if new_state == Gst.State.PAUSED and fade_out_ms > 0:
+        if new_state == Gst.State.PLAYING:
+            return self.__resume_playback(player_uuid)
+
+        # Pause path: remember position for a possible later recreate
+        if playbin:
+            position = self.__get_position_ns(playbin)
+            if position is not None:
+                player["internal"]["position"] = position
+
+        if not playbin:
+            player["internal"]["last_state"] = Gst.State.PAUSED
+            return self._get_player_state(Gst.State.PAUSED)
+
+        if fade_out_ms > 0:
             current_volume = playbin.get_property("volume")
 
             def on_fade_out_done():
                 if player_uuid not in self.players:
                     return
-                self.players[player_uuid]["player"].set_state(Gst.State.PAUSED)
-                self.players[player_uuid]["player"].set_property(
-                    "volume", target_volume
-                )
+                current = self.players[player_uuid]["player"]
+                if not current:
+                    return
+                self.__try_set_state(current, Gst.State.PAUSED)
+                current.set_property("volume", target_volume)
                 self.players[player_uuid]["internal"]["last_state"] = Gst.State.PAUSED
 
             self.__start_fade(
@@ -869,16 +1070,9 @@ class Audioplayer(CleepModule):
             )
             return self._get_player_state(Gst.State.PAUSED)
 
-        if new_state == Gst.State.PLAYING and fade_in_ms > 0:
-            playbin.set_property("volume", 0.0)
-            playbin.set_state(Gst.State.PLAYING)
-            player["internal"]["last_state"] = Gst.State.PLAYING
-            self.__start_fade(player_uuid, 0.0, target_volume, fade_in_ms)
-            return self._get_player_state(Gst.State.PLAYING)
-
-        playbin.set_state(new_state)
-        player["internal"]["last_state"] = new_state
-        return self._get_player_state(new_state)
+        self.__try_set_state(playbin, Gst.State.PAUSED)
+        player["internal"]["last_state"] = Gst.State.PAUSED
+        return self._get_player_state(Gst.State.PAUSED)
 
     def stop_playback(self, player_uuid):
         """

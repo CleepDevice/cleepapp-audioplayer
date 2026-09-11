@@ -1444,6 +1444,8 @@ class TestAudioplayer(unittest.TestCase):
         self.init()
         player = Mock()
         player.get_state.return_value = ("dummy", Gst.State.PLAYING, "dummy")
+        player.set_state.return_value = Gst.StateChangeReturn.SUCCESS
+        player.query_position.return_value = (True, 123456789)
         track1 = self.module._make_track("/resource/track1", "audio/dummy")
         player_data = {
             "uuid": "the-uuid",
@@ -1455,13 +1457,13 @@ class TestAudioplayer(unittest.TestCase):
                 "metadata": {},
             },
             "player": player,
-            "source": Mock(),
-            "volume": Mock(),
-            "pipeline": [],
             "internal": {
                 "to_destroy": False,
                 "tags_sent": True,
-                "last_state": 1,
+                "last_state": Gst.State.PLAYING,
+                "target_volume": 0.55,
+                "fade": None,
+                "position": None,
             },
         }
         self.module.players = {"the-uuid": player_data}
@@ -1469,14 +1471,17 @@ class TestAudioplayer(unittest.TestCase):
 
         self.module.pause_playback("the-uuid")
 
-        player.get_state.assert_called_with(1)
+        player.get_state.assert_any_call(1)
         player.set_state.assert_called_with(Gst.State.PAUSED)
+        self.assertEqual(player_data["internal"]["position"], 123456789)
         self.module._set_volume.assert_not_called()
 
     def test_pause_playback_with_volume(self):
         self.init()
         player = Mock()
         player.get_state.return_value = ("dummy", Gst.State.PLAYING, "dummy")
+        player.set_state.return_value = Gst.StateChangeReturn.SUCCESS
+        player.query_position.return_value = (True, 1)
         track1 = self.module._make_track("/resource/track1", "audio/dummy")
         player_data = {
             "uuid": "the-uuid",
@@ -1488,13 +1493,13 @@ class TestAudioplayer(unittest.TestCase):
                 "metadata": {},
             },
             "player": player,
-            "source": Mock(),
-            "volume": Mock(),
-            "pipeline": [],
             "internal": {
                 "to_destroy": False,
                 "tags_sent": True,
-                "last_state": 1,
+                "last_state": Gst.State.PLAYING,
+                "target_volume": 0.55,
+                "fade": None,
+                "position": None,
             },
         }
         self.module.players = {"the-uuid": player_data}
@@ -1507,7 +1512,13 @@ class TestAudioplayer(unittest.TestCase):
     def test_pause_playback_force_play(self):
         self.init()
         player = Mock()
-        player.get_state.return_value = ("dummy", Gst.State.PLAYING, "dummy")
+        player.get_state.return_value = (
+            Gst.StateChangeReturn.SUCCESS,
+            Gst.State.PLAYING,
+            Gst.State.VOID_PENDING,
+        )
+        player.set_state.return_value = Gst.StateChangeReturn.SUCCESS
+        player.query_position.return_value = (True, 42)
         track1 = self.module._make_track("/resource/track1", "audio/dummy")
         player_data = {
             "uuid": "the-uuid",
@@ -1519,13 +1530,13 @@ class TestAudioplayer(unittest.TestCase):
                 "metadata": {},
             },
             "player": player,
-            "source": Mock(),
-            "volume": Mock(),
-            "pipeline": [],
             "internal": {
                 "to_destroy": False,
                 "tags_sent": True,
-                "last_state": 1,
+                "last_state": Gst.State.PAUSED,
+                "target_volume": 0.55,
+                "fade": None,
+                "position": 42,
             },
         }
         self.module.players = {"the-uuid": player_data}
@@ -1538,6 +1549,8 @@ class TestAudioplayer(unittest.TestCase):
         self.init()
         player = Mock()
         player.get_state.return_value = ("dummy", Gst.State.PLAYING, "dummy")
+        player.set_state.return_value = Gst.StateChangeReturn.SUCCESS
+        player.query_position.return_value = (True, 99)
         track1 = self.module._make_track("/resource/track1", "audio/dummy")
         player_data = {
             "uuid": "the-uuid",
@@ -1549,13 +1562,13 @@ class TestAudioplayer(unittest.TestCase):
                 "metadata": {},
             },
             "player": player,
-            "source": Mock(),
-            "volume": Mock(),
-            "pipeline": [],
             "internal": {
                 "to_destroy": False,
                 "tags_sent": True,
-                "last_state": 1,
+                "last_state": Gst.State.PLAYING,
+                "target_volume": 0.55,
+                "fade": None,
+                "position": None,
             },
         }
         self.module.players = {"the-uuid": player_data}
@@ -1567,7 +1580,16 @@ class TestAudioplayer(unittest.TestCase):
     def test_pause_playback_while_paused(self):
         self.init()
         player = Mock()
-        player.get_state.return_value = ("dummy", Gst.State.PAUSED, "dummy")
+        player.get_state.side_effect = [
+            ("dummy", Gst.State.PAUSED, "dummy"),
+            (
+                Gst.StateChangeReturn.SUCCESS,
+                Gst.State.PLAYING,
+                Gst.State.VOID_PENDING,
+            ),
+        ]
+        player.set_state.return_value = Gst.StateChangeReturn.SUCCESS
+        player.query_position.return_value = (True, 42)
         track1 = self.module._make_track("/resource/track1", "audio/dummy")
         player_data = {
             "uuid": "the-uuid",
@@ -1579,21 +1601,64 @@ class TestAudioplayer(unittest.TestCase):
                 "metadata": {},
             },
             "player": player,
-            "source": Mock(),
-            "volume": Mock(),
-            "pipeline": [],
             "internal": {
                 "to_destroy": False,
                 "tags_sent": True,
-                "last_state": 1,
+                "last_state": Gst.State.PAUSED,
+                "target_volume": 0.55,
+                "fade": None,
+                "position": 42,
             },
         }
         self.module.players = {"the-uuid": player_data}
 
         self.module.pause_playback("the-uuid")
 
-        player.get_state.assert_called_with(1)
+        player.get_state.assert_any_call(1)
         player.set_state.assert_called_with(Gst.State.PLAYING)
+
+    def test_pause_playback_resume_recreates_on_failure(self):
+        self.init()
+        player = Mock()
+        player.get_state.side_effect = [
+            ("dummy", Gst.State.PAUSED, "dummy"),
+            (
+                Gst.StateChangeReturn.FAILURE,
+                Gst.State.NULL,
+                Gst.State.VOID_PENDING,
+            ),
+        ]
+        player.set_state.return_value = Gst.StateChangeReturn.FAILURE
+        player.query_position.return_value = (True, 5000)
+        track1 = self.module._make_track("/resource/track1", "audio/mpeg")
+        player_data = {
+            "uuid": "the-uuid",
+            "playlist": {
+                "index": 0,
+                "tracks": [track1],
+                "repeat": False,
+                "volume": 80,
+                "metadata": {},
+            },
+            "player": player,
+            "internal": {
+                "to_destroy": False,
+                "tags_sent": True,
+                "last_state": Gst.State.PAUSED,
+                "target_volume": 0.8,
+                "fade": None,
+                "position": 5000,
+            },
+        }
+        self.module.players = {"the-uuid": player_data}
+        self.module._Audioplayer__recreate_playback = Mock(return_value="playing")
+
+        result = self.module.pause_playback("the-uuid", force_play=True)
+
+        self.module._Audioplayer__recreate_playback.assert_called_with(
+            "the-uuid", playing=True
+        )
+        self.assertEqual(result, "playing")
 
     def test_pause_playback_invalid_params(self):
         self.init()

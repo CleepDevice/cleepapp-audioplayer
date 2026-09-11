@@ -8,6 +8,7 @@
 ### Added
 - Configurable fade-in / fade-out durations (`set_fade` command)
 - Internal audio sink selection (auto/alsa) for future hardware app integration
+- Auto-recreate playbin on failed resume, restoring track position
 
 ## [1.3.0] - 2024-10-14
 ### Fixed
