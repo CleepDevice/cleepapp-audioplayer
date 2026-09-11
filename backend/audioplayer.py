@@ -561,6 +561,23 @@ class Audioplayer(CleepModule):
     def add_track(self, player_uuid, resource, audio_format=None, track_index=None):
         """
         Add track in specified player playlist.
+
+        Note:
+            A player with no audio resource in playlist is destroyed so take care to call this command before current audio
+            resource playing is terminated.
+
+        Args:
+            player_uuid (str): player identifier returned by play command
+            resource (str): local filepath or url
+            audio_format (str, optional): audio format (mime). Mandatory if resource is an url. Defaults to None.
+            track_index (number, optional): add new track to specified playlist position or at end of playlist. Defaults to None.
+
+        Returns:
+            bool: True if track added successfully, False if max playlist tracks reached
+
+        Raises:
+            CommandError: if player does not exist
+            MissingParameter: if parameters are missing
         """
         self._check_parameters(
             [
@@ -621,6 +638,23 @@ class Audioplayer(CleepModule):
     def add_tracks(self, player_uuid, tracks):
         """
         Add multiple tracks at once
+
+        Args:
+            player_uuid (str): player identifier
+            tracks (list): list of tracks::
+
+                [
+                    {
+                        resource (string): local filepath or url
+                        audio_format (string): audio format (mime). Mandatory if resource is an url, can be None if local file.
+                    },
+                    ...
+                ]
+
+        Raises:
+            CommandError: if player does not exist
+            MissingParameter: if parameters are missing
+            InvalidParameter: if command parameters are invalid
         """
         self._check_parameters([{"name": "tracks", "value": tracks, "type": list}])
 
@@ -633,6 +667,10 @@ class Audioplayer(CleepModule):
     def remove_track(self, player_uuid, track_index):
         """
         Remove track from player playlist
+
+        Args:
+            player_uuid (string): player identifier
+            track_index (int): track index (0 is the first playlist track)
         """
         self._check_parameters(
             [
@@ -679,6 +717,14 @@ class Audioplayer(CleepModule):
     ):
         """
         Create a player and start playing specified resource
+
+        Args:
+            resource (str): local filepath or url
+            audio_format (str, optional): audio format (mime). Mandatory if resource is an url. Defaults to None.
+            volume (int, optional): player volume. Defaults to 100.
+            paused (bool, optional): start playback paused. Useful to create player instance in silently. Defaults to False.
+            repeat (bool, optional): enable repeat. Defaults to False.
+            shuffle (bool, optional): True to shuffle playlist at end of it. Defaults to False.
 
         Returns:
             string: player identifier
@@ -988,6 +1034,15 @@ class Audioplayer(CleepModule):
         Toggle pause status for specified player.
         Player stays alive: resume is fast (no playbin rebuild).
         If resume fails, playbin is automatically recreated and position restored.
+
+        Args:
+            player_uuid (string): player identifier
+            force_pause (bool, optional): force pause. Defaults to False.
+            force_play (bool, optional): force play. If both force_pause and force_play are True it toggles current state. Defaults to False.
+            volume (int, optional): if specified set player volume. Defaults to None.
+
+        Returns:
+            string: player state as describe in PLAYER_STATES
         """
         self._check_parameters(
             [
@@ -1077,7 +1132,15 @@ class Audioplayer(CleepModule):
     def stop_playback(self, player_uuid):
         """
         Stop specified player playback and destroy player.
-        Prefer pause_playback to keep player alive for fast resume.
+        The player will not be available anymore after the stop command, the playlist is also deleted.
+        You need to call play command to create new player.
+        If you want to keep player alive, prefer using pause command.
+
+        Args:
+            player_uuid (string): player identifier
+
+        Raises:
+            CommandError: if player does not exist
         """
         self._check_parameters(
             [
@@ -1123,6 +1186,18 @@ class Audioplayer(CleepModule):
     def play_next_track(self, player_uuid):
         """
         Play next track in specified player playlist
+
+        If there is no next track in playlist, current player playback is stopped and player is destroyed.
+        You will need to call play command again to create new player.
+
+        Args:
+            player_uuid (string): player identifier
+
+        Returns:
+            bool: True if next track playback succeed, False otherwise
+
+        Raises:
+            CommandError: if player does not exist
         """
         self._check_parameters(
             [
@@ -1195,6 +1270,16 @@ class Audioplayer(CleepModule):
     def play_previous_track(self, player_uuid):
         """
         Play previous track in specified player playlist
+        If there is no previous track, current playback is restarted
+
+        Args:
+            player_uuid (string): player identifier
+
+        Returns:
+            bool: True if previous track played successfully, False otherwise
+
+        Raises:
+            CommandError: if command failed
         """
         self._check_parameters(
             [
@@ -1226,6 +1311,13 @@ class Audioplayer(CleepModule):
     def play_track(self, player_uuid, track_index):
         """
         Play track at specified index
+
+        Args:
+            player_uuid (string): player identifier
+            track_index (int): track index
+
+        Returns:
+            bool: True if playback started for specified track index, False otherwise
         """
         if player_uuid not in self.players:
             self.logger.warning("Cant play track: player %s does not exist", player_uuid)
@@ -1260,6 +1352,25 @@ class Audioplayer(CleepModule):
     def get_players(self):
         """
         Return list of players
+
+        Returns:
+            list: list of players with current playback info::
+
+                [
+                    {
+                        playeruuid (string): player identifier
+                        playback (dict): current track::
+
+                            {
+                                resource (string): file/url
+                                audio_format (string): file format
+                            }
+
+                        state (string): player state
+                        volume (int): player volume
+                    },
+                    ...
+                ]
         """
         return [
             self.__get_playback_info(player["uuid"]) for player in self.players.values()
@@ -1268,6 +1379,17 @@ class Audioplayer(CleepModule):
     def get_playlist(self, player_uuid):
         """
         Return player playlist
+
+        Args:
+            player_uuid (string): player identifier
+
+        Returns:
+            dict: current playlist::
+
+                {
+                    tracks (list): list of tracks
+                    current_index (number): current track index (0 is the first playlist track)
+                }
         """
         self._check_parameters(
             [
@@ -1286,6 +1408,10 @@ class Audioplayer(CleepModule):
     def set_volume(self, player_uuid, volume):
         """
         Set player volume
+
+        Args:
+            player_uuid (string): player identifier
+            volume (number): percentage volume
         """
         self._check_parameters(
             [
@@ -1324,6 +1450,14 @@ class Audioplayer(CleepModule):
     def set_repeat(self, player_uuid, repeat, shuffle=False):
         """
         Repeat playlist when end of it is reached
+
+        Args:
+            player_uuid (string): player identifier
+            repeat (bool): True to repeat playlist, False otherwise
+            shuffle (bool, optional): True to shuffle playlist when end is reached. Defaults to False.
+
+        Raises:
+            CommandError: if player does not exist
         """
         self._check_parameters(
             [
@@ -1355,6 +1489,9 @@ class Audioplayer(CleepModule):
     def shuffle_playlist(self, player_uuid):
         """
         Shuffle playlist
+
+        Args:
+            player_uuid (string): player identifier
         """
         if player_uuid not in self.players:
             raise CommandError(f'Player "{player_uuid}" does not exist')

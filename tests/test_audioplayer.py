@@ -2543,6 +2543,583 @@ class TestAudioplayer(unittest.TestCase):
             self.module.shuffle_playlist("dummy")
         self.assertEqual(str(cm.exception), 'Player "dummy" does not exist')
 
+    def test__create_playbin_fails_when_playbin_unavailable(self):
+        self.init()
+        player_data = {"uuid": "the-uuid", "player": None, "internal": {}}
+
+        with patch("backend.audioplayer.Gst.ElementFactory.make", return_value=None):
+            with self.assertRaisesRegex(Exception, "Unable to create GStreamer playbin"):
+                self.module._Audioplayer__create_playbin(player_data)
+
+    def test__create_playbin_fails_when_autoaudiosink_unavailable(self):
+        self.init()
+        playbin = Mock()
+        player_data = {"uuid": "the-uuid", "player": None, "internal": {}}
+
+        with patch("backend.audioplayer.Gst.ElementFactory.make") as make_mock:
+            make_mock.side_effect = [playbin, None]
+            with self.assertRaisesRegex(Exception, "Unable to create autoaudiosink"):
+                self.module._Audioplayer__create_playbin(player_data)
+
+    def test__create_playbin_fails_when_alsasink_unavailable(self):
+        self.init()
+        self.module._set_config_field("audio_sink", "alsa")
+        playbin = Mock()
+        player_data = {"uuid": "the-uuid", "player": None, "internal": {}}
+
+        with patch("backend.audioplayer.Gst.ElementFactory.make") as make_mock:
+            make_mock.side_effect = [playbin, None]
+            with self.assertRaisesRegex(Exception, "Unable to create alsasink"):
+                self.module._Audioplayer__create_playbin(player_data)
+
+    def test_set_audio_sink_invalid(self):
+        self.init()
+
+        with self.assertRaises(InvalidParameter):
+            self.module._set_audio_sink("pulse")
+
+    def test_set_fade_invalid_params(self):
+        self.init()
+
+        with self.assertRaises(InvalidParameter):
+            self.module.set_fade(-1, 0)
+        with self.assertRaises(InvalidParameter):
+            self.module.set_fade(0, -5)
+
+    def test__process_players_messages_skips_destroyed_players(self):
+        self.init()
+        player = Mock()
+        self.module.players = {
+            "the-uuid": {
+                "player": player,
+                "internal": {"to_destroy": True},
+            }
+        }
+        self.module._Audioplayer__process_gstreamer_message = Mock()
+
+        self.module._Audioplayer__process_players_messages()
+
+        player.get_bus.assert_not_called()
+        self.module._Audioplayer__process_gstreamer_message.assert_not_called()
+
+    def test__send_playback_event_unknown_player(self):
+        self.init()
+        player = Mock()
+
+        self.module._Audioplayer__send_playback_event("unknown", player)
+
+        player.get_state.assert_not_called()
+
+    def test__resource_to_uri_filepath_and_url(self):
+        self.init()
+
+        with patch.object(Audioplayer, "_is_filepath", return_value=True):
+            uri = self.module._Audioplayer__resource_to_uri("/tmp/track.mp3")
+        self.assertTrue(uri.startswith("file://"))
+        self.assertIn("track.mp3", uri)
+
+        with patch.object(Audioplayer, "_is_filepath", return_value=False):
+            url = "https://example.com/stream.mp3"
+            self.assertEqual(self.module._Audioplayer__resource_to_uri(url), url)
+
+    def test__start_fade_zero_duration_calls_on_complete(self):
+        self.init()
+        on_complete = Mock()
+
+        self.module._Audioplayer__start_fade("missing", 0.0, 1.0, 0, on_complete)
+
+        on_complete.assert_called_once()
+
+    def test__start_fade_sets_fade_state(self):
+        self.init()
+        playbin = Mock()
+        self.module.players = {
+            "the-uuid": {
+                "player": playbin,
+                "internal": {"fade": None},
+            }
+        }
+
+        with patch("backend.audioplayer.time.monotonic", return_value=10.0):
+            self.module._Audioplayer__start_fade("the-uuid", 0.1, 0.8, 500)
+
+        fade = self.module.players["the-uuid"]["internal"]["fade"]
+        self.assertEqual(fade["start"], 0.1)
+        self.assertEqual(fade["end"], 0.8)
+        self.assertEqual(fade["duration_ms"], 500)
+        self.assertEqual(fade["started_at"], 10.0)
+        playbin.set_property.assert_called_with("volume", 0.1)
+
+    def test__cancel_fade(self):
+        self.init()
+        self.module.players = {
+            "the-uuid": {"internal": {"fade": {"start": 0}}}
+        }
+
+        self.module._Audioplayer__cancel_fade("the-uuid")
+
+        self.assertIsNone(self.module.players["the-uuid"]["internal"]["fade"])
+
+    def test__process_fades_applies_volume_and_completes(self):
+        self.init()
+        playbin = Mock()
+        on_complete = Mock()
+        self.module.players = {
+            "the-uuid": {
+                "player": playbin,
+                "internal": {
+                    "fade": {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "duration_ms": 1000,
+                        "started_at": 0.0,
+                        "on_complete": on_complete,
+                    }
+                },
+            }
+        }
+
+        with patch("backend.audioplayer.time.monotonic", return_value=1.5):
+            self.module._Audioplayer__process_fades()
+
+        playbin.set_property.assert_called_with("volume", 1.0)
+        self.assertIsNone(self.module.players["the-uuid"]["internal"]["fade"])
+        on_complete.assert_called_once()
+
+    def test__process_fades_handles_set_property_exception(self):
+        self.init()
+        playbin = Mock()
+        playbin.set_property.side_effect = Exception("volume fail")
+        self.module.players = {
+            "the-uuid": {
+                "player": playbin,
+                "internal": {
+                    "fade": {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "duration_ms": 1000,
+                        "started_at": 0.0,
+                        "on_complete": Mock(),
+                    }
+                },
+            }
+        }
+
+        with patch("backend.audioplayer.time.monotonic", return_value=0.2):
+            self.module._Audioplayer__process_fades()
+
+        self.assertIsNone(self.module.players["the-uuid"]["internal"]["fade"])
+
+    def test__process_fades_handles_on_complete_exception(self):
+        self.init()
+        playbin = Mock()
+        on_complete = Mock(side_effect=Exception("done fail"))
+        self.module.players = {
+            "the-uuid": {
+                "player": playbin,
+                "internal": {
+                    "fade": {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "duration_ms": 100,
+                        "started_at": 0.0,
+                        "on_complete": on_complete,
+                    }
+                },
+            }
+        }
+
+        with patch("backend.audioplayer.time.monotonic", return_value=2.0):
+            self.module._Audioplayer__process_fades()
+
+        on_complete.assert_called_once()
+        self.assertIsNone(self.module.players["the-uuid"]["internal"]["fade"])
+
+    def test__process_fades_skips_when_no_fade(self):
+        self.init()
+        playbin = Mock()
+        self.module.players = {
+            "the-uuid": {"player": playbin, "internal": {"fade": None}}
+        }
+
+        self.module._Audioplayer__process_fades()
+
+        playbin.set_property.assert_not_called()
+
+    def test__get_position_ns(self):
+        self.init()
+        self.assertIsNone(self.module._Audioplayer__get_position_ns(None))
+
+        playbin = Mock()
+        playbin.query_position.return_value = (True, 42)
+        self.assertEqual(self.module._Audioplayer__get_position_ns(playbin), 42)
+
+        playbin.query_position.return_value = (False, 0)
+        self.assertIsNone(self.module._Audioplayer__get_position_ns(playbin))
+
+        playbin.query_position.side_effect = Exception("boom")
+        self.assertIsNone(self.module._Audioplayer__get_position_ns(playbin))
+
+    def test__seek_ns(self):
+        self.init()
+        self.assertFalse(self.module._Audioplayer__seek_ns(None, 10))
+        self.assertFalse(self.module._Audioplayer__seek_ns(Mock(), None))
+        self.assertFalse(self.module._Audioplayer__seek_ns(Mock(), 0))
+
+        playbin = Mock()
+        playbin.seek_simple.return_value = True
+        self.assertTrue(self.module._Audioplayer__seek_ns(playbin, 123))
+        playbin.seek_simple.assert_called()
+
+        playbin.seek_simple.side_effect = Exception("seek fail")
+        self.assertFalse(self.module._Audioplayer__seek_ns(playbin, 123))
+
+    def test__try_set_state(self):
+        self.init()
+        self.assertFalse(self.module._Audioplayer__try_set_state(None, Gst.State.PLAYING))
+
+        playbin = Mock()
+        playbin.set_state.side_effect = Exception("fail")
+        self.assertFalse(self.module._Audioplayer__try_set_state(playbin, Gst.State.PLAYING))
+
+        playbin = Mock()
+        playbin.set_state.return_value = Gst.StateChangeReturn.FAILURE
+        self.assertFalse(self.module._Audioplayer__try_set_state(playbin, Gst.State.PLAYING))
+
+        playbin = Mock()
+        playbin.set_state.return_value = Gst.StateChangeReturn.ASYNC
+        playbin.get_state.side_effect = Exception("wait fail")
+        self.assertFalse(self.module._Audioplayer__try_set_state(playbin, Gst.State.PLAYING))
+
+        playbin = Mock()
+        playbin.set_state.return_value = Gst.StateChangeReturn.ASYNC
+        playbin.get_state.return_value = (
+            Gst.StateChangeReturn.FAILURE,
+            Gst.State.NULL,
+            Gst.State.VOID_PENDING,
+        )
+        self.assertFalse(self.module._Audioplayer__try_set_state(playbin, Gst.State.PLAYING))
+
+        playbin = Mock()
+        playbin.set_state.return_value = Gst.StateChangeReturn.ASYNC
+        playbin.get_state.return_value = (
+            Gst.StateChangeReturn.SUCCESS,
+            Gst.State.NULL,
+            Gst.State.VOID_PENDING,
+        )
+        self.assertFalse(self.module._Audioplayer__try_set_state(playbin, Gst.State.PLAYING))
+
+        playbin = Mock()
+        playbin.set_state.return_value = Gst.StateChangeReturn.SUCCESS
+        playbin.get_state.return_value = (
+            Gst.StateChangeReturn.SUCCESS,
+            Gst.State.PLAYING,
+            Gst.State.VOID_PENDING,
+        )
+        self.assertTrue(self.module._Audioplayer__try_set_state(playbin, Gst.State.PLAYING))
+
+        playbin = Mock()
+        playbin.set_state.return_value = Gst.StateChangeReturn.ASYNC
+        playbin.get_state.return_value = (
+            Gst.StateChangeReturn.ASYNC,
+            Gst.State.PAUSED,
+            Gst.State.PLAYING,
+        )
+        self.assertTrue(self.module._Audioplayer__try_set_state(playbin, Gst.State.PLAYING))
+
+    def _build_player(self, playbin, **internal_overrides):
+        track = self.module._make_track("/resource/track1", "audio/mpeg")
+        internal = {
+            "to_destroy": False,
+            "tags_sent": False,
+            "last_state": Gst.State.PAUSED,
+            "target_volume": 0.5,
+            "fade": None,
+            "position": 1000,
+        }
+        internal.update(internal_overrides)
+        return {
+            "uuid": "the-uuid",
+            "playlist": {
+                "index": 0,
+                "tracks": [track],
+                "repeat": False,
+                "volume": 50,
+                "metadata": {},
+                "duration": None,
+            },
+            "player": playbin,
+            "internal": internal,
+        }
+
+    def test__play_track_unknown_player(self):
+        self.init()
+        track = self.module._make_track("https://x/a.mp3", "audio/mpeg")
+
+        with self.assertRaises(CommandError):
+            self.module._Audioplayer__play_track(track, "missing")
+
+    @patch.object(Audioplayer, "_is_filepath", return_value=False)
+    def test__play_track_creates_playbin_when_missing(self, _is_filepath_mock):
+        self.init()
+        track = self.module._make_track("https://x/a.mp3", "audio/mpeg")
+        player_data = self._build_player(None)
+        self.module.players = {"the-uuid": player_data}
+        playbin = Mock()
+        self.module._Audioplayer__create_playbin = Mock(
+            side_effect=lambda p: p.update({"player": playbin})
+        )
+
+        self.module._Audioplayer__play_track(track, "the-uuid")
+
+        self.module._Audioplayer__create_playbin.assert_called_once()
+        playbin.set_property.assert_any_call("uri", "https://x/a.mp3")
+        playbin.set_state.assert_called_with(Gst.State.PLAYING)
+
+    @patch.object(Audioplayer, "_is_filepath", return_value=False)
+    def test__play_track_paused_and_fade_in(self, _is_filepath_mock):
+        self.init()
+        track = self.module._make_track("https://x/a.mp3", "audio/mpeg")
+        playbin = Mock()
+        player_data = self._build_player(playbin)
+        self.module.players = {"the-uuid": player_data}
+
+        self.module._Audioplayer__play_track(track, "the-uuid", paused=True)
+        playbin.set_state.assert_called_with(Gst.State.PAUSED)
+        self.assertEqual(player_data["internal"]["last_state"], Gst.State.PAUSED)
+
+        self.module._set_config_field("fade_in_ms", 300)
+        self.module._Audioplayer__start_fade = Mock()
+        self.module._Audioplayer__play_track(track, "the-uuid", paused=False)
+        playbin.set_property.assert_any_call("volume", 0.0)
+        self.module._Audioplayer__start_fade.assert_called()
+        self.assertEqual(player_data["internal"]["last_state"], Gst.State.PLAYING)
+
+    def test__recreate_playback_success(self):
+        self.init()
+        old_playbin = Mock()
+        new_playbin = Mock()
+        player_data = self._build_player(old_playbin, position=555)
+        self.module.players = {"the-uuid": player_data}
+        self.module._Audioplayer__create_playbin = Mock(
+            side_effect=lambda p: p.update({"player": new_playbin})
+        )
+        self.module._Audioplayer__play_track = Mock()
+        self.module._Audioplayer__seek_ns = Mock(return_value=True)
+        self.module._Audioplayer__try_set_state = Mock(return_value=True)
+
+        result = self.module._Audioplayer__recreate_playback("the-uuid", playing=True)
+
+        old_playbin.set_state.assert_called_with(Gst.State.NULL)
+        self.module._Audioplayer__play_track.assert_called()
+        self.module._Audioplayer__seek_ns.assert_called_with(new_playbin, 555)
+        self.module._Audioplayer__try_set_state.assert_called_with(
+            new_playbin, Gst.State.PLAYING
+        )
+        self.assertEqual(result, self.module._get_player_state(Gst.State.PLAYING))
+
+    def test__recreate_playback_paused_and_with_fade(self):
+        self.init()
+        playbin = Mock()
+        player_data = self._build_player(playbin, position=10)
+        self.module.players = {"the-uuid": player_data}
+        self.module._Audioplayer__create_playbin = Mock(
+            side_effect=lambda p: p.update({"player": playbin})
+        )
+        self.module._Audioplayer__play_track = Mock()
+        self.module._Audioplayer__seek_ns = Mock()
+        self.module._Audioplayer__try_set_state = Mock(return_value=True)
+        self.module._Audioplayer__start_fade = Mock()
+
+        result = self.module._Audioplayer__recreate_playback("the-uuid", playing=False)
+        self.assertEqual(result, self.module._get_player_state(Gst.State.PAUSED))
+
+        self.module._set_config_field("fade_in_ms", 200)
+        result = self.module._Audioplayer__recreate_playback("the-uuid", playing=True)
+        self.module._Audioplayer__start_fade.assert_called()
+        self.assertEqual(result, self.module._get_player_state(Gst.State.PLAYING))
+
+    def test__recreate_playback_errors(self):
+        self.init()
+
+        with self.assertRaises(CommandError):
+            self.module._Audioplayer__recreate_playback("missing")
+
+        playbin = Mock()
+        player_data = self._build_player(playbin)
+        player_data["playlist"]["index"] = None
+        self.module.players = {"the-uuid": player_data}
+        with self.assertRaises(CommandError):
+            self.module._Audioplayer__recreate_playback("the-uuid")
+
+        player_data = self._build_player(playbin)
+        self.module.players = {"the-uuid": player_data}
+        self.module._Audioplayer__create_playbin = Mock(
+            side_effect=lambda p: p.update({"player": playbin})
+        )
+        self.module._Audioplayer__play_track = Mock()
+        self.module._Audioplayer__seek_ns = Mock()
+        self.module._Audioplayer__try_set_state = Mock(return_value=False)
+        with self.assertRaises(CommandError):
+            self.module._Audioplayer__recreate_playback("the-uuid", playing=True)
+
+        self.module._set_config_field("fade_in_ms", 100)
+        with self.assertRaises(CommandError):
+            self.module._Audioplayer__recreate_playback("the-uuid", playing=True)
+
+    def test__recreate_playback_handles_old_playbin_stop_exception(self):
+        self.init()
+        old_playbin = Mock()
+        old_playbin.set_state.side_effect = Exception("stop fail")
+        new_playbin = Mock()
+        player_data = self._build_player(old_playbin, position=None)
+        self.module.players = {"the-uuid": player_data}
+        self.module._Audioplayer__get_position_ns = Mock(return_value=None)
+        self.module._Audioplayer__create_playbin = Mock(
+            side_effect=lambda p: p.update({"player": new_playbin})
+        )
+        self.module._Audioplayer__play_track = Mock()
+        self.module._Audioplayer__try_set_state = Mock(return_value=True)
+
+        result = self.module._Audioplayer__recreate_playback("the-uuid", playing=True)
+
+        self.assertEqual(result, self.module._get_player_state(Gst.State.PLAYING))
+
+    def test__resume_playback_without_playbin(self):
+        self.init()
+        player_data = self._build_player(None)
+        self.module.players = {"the-uuid": player_data}
+        self.module._Audioplayer__recreate_playback = Mock(return_value="playing")
+
+        result = self.module._Audioplayer__resume_playback("the-uuid")
+
+        self.module._Audioplayer__recreate_playback.assert_called_with(
+            "the-uuid", playing=True
+        )
+        self.assertEqual(result, "playing")
+
+    def test__resume_playback_with_fade_in(self):
+        self.init()
+        playbin = Mock()
+        playbin.query_position.return_value = (True, 77)
+        player_data = self._build_player(playbin)
+        self.module.players = {"the-uuid": player_data}
+        self.module._set_config_field("fade_in_ms", 250)
+        self.module._Audioplayer__try_set_state = Mock(return_value=True)
+        self.module._Audioplayer__start_fade = Mock()
+
+        result = self.module._Audioplayer__resume_playback("the-uuid")
+
+        playbin.set_property.assert_called_with("volume", 0.0)
+        self.module._Audioplayer__start_fade.assert_called()
+        self.assertEqual(result, self.module._get_player_state(Gst.State.PLAYING))
+        self.assertEqual(player_data["internal"]["position"], 77)
+
+    def test__resume_playback_fade_in_set_volume_fails_recreates(self):
+        self.init()
+        playbin = Mock()
+        playbin.set_property.side_effect = Exception("volume fail")
+        player_data = self._build_player(playbin)
+        self.module.players = {"the-uuid": player_data}
+        self.module._set_config_field("fade_in_ms", 250)
+        self.module._Audioplayer__recreate_playback = Mock(return_value="playing")
+
+        result = self.module._Audioplayer__resume_playback("the-uuid")
+
+        self.module._Audioplayer__recreate_playback.assert_called_with(
+            "the-uuid", playing=True
+        )
+        self.assertEqual(result, "playing")
+
+    def test__resume_playback_fade_in_set_state_fails_recreates(self):
+        self.init()
+        playbin = Mock()
+        player_data = self._build_player(playbin)
+        self.module.players = {"the-uuid": player_data}
+        self.module._set_config_field("fade_in_ms", 250)
+        self.module._Audioplayer__try_set_state = Mock(return_value=False)
+        self.module._Audioplayer__recreate_playback = Mock(return_value="playing")
+
+        result = self.module._Audioplayer__resume_playback("the-uuid")
+
+        self.module._Audioplayer__recreate_playback.assert_called_with(
+            "the-uuid", playing=True
+        )
+        self.assertEqual(result, "playing")
+
+    def test_pause_playback_without_playbin(self):
+        self.init()
+        player_data = self._build_player(None, last_state=Gst.State.PLAYING)
+        self.module.players = {"the-uuid": player_data}
+
+        result = self.module.pause_playback("the-uuid")
+
+        self.assertEqual(result, self.module._get_player_state(Gst.State.PAUSED))
+        self.assertEqual(player_data["internal"]["last_state"], Gst.State.PAUSED)
+
+    def test_pause_playback_with_fade_out(self):
+        self.init()
+        playbin = Mock()
+        playbin.get_state.return_value = ("dummy", Gst.State.PLAYING, "dummy")
+        playbin.get_property.return_value = 0.7
+        playbin.query_position.return_value = (True, 9)
+        player_data = self._build_player(playbin, last_state=Gst.State.PLAYING)
+        self.module.players = {"the-uuid": player_data}
+        self.module._set_config_field("fade_out_ms", 100)
+        self.module._Audioplayer__start_fade = Mock()
+
+        result = self.module.pause_playback("the-uuid", force_pause=True)
+
+        self.assertEqual(result, self.module._get_player_state(Gst.State.PAUSED))
+        self.module._Audioplayer__start_fade.assert_called()
+        args = self.module._Audioplayer__start_fade.call_args
+        self.assertEqual(args[0][0], "the-uuid")
+        self.assertEqual(args[0][1], 0.7)
+        self.assertEqual(args[0][2], 0.0)
+        on_complete = args[1]["on_complete"] if "on_complete" in args[1] else args[0][4]
+
+        # Execute fade completion callback
+        self.module._Audioplayer__try_set_state = Mock(return_value=True)
+        on_complete()
+        self.module._Audioplayer__try_set_state.assert_called_with(
+            playbin, Gst.State.PAUSED
+        )
+        playbin.set_property.assert_called_with("volume", 0.5)
+        self.assertEqual(player_data["internal"]["last_state"], Gst.State.PAUSED)
+
+        # Callback safety when player already gone / playbin gone
+        del self.module.players["the-uuid"]
+        on_complete()
+        self.module.players = {"the-uuid": self._build_player(None)}
+        on_complete()
+
+    def test_stop_playback_with_fade_out(self):
+        self.init()
+        playbin = Mock()
+        playbin.get_property.return_value = 0.4
+        player_data = self._build_player(playbin)
+        self.module.players = {"the-uuid": player_data}
+        self.module._set_config_field("fade_out_ms", 150)
+        self.module._Audioplayer__start_fade = Mock()
+        self.module._destroy_player = Mock()
+        self.module.event_playback_update = Mock()
+
+        self.module.stop_playback("the-uuid")
+
+        self.module._Audioplayer__start_fade.assert_called()
+        on_complete = self.module._Audioplayer__start_fade.call_args[1].get(
+            "on_complete"
+        ) or self.module._Audioplayer__start_fade.call_args[0][4]
+
+        on_complete()
+        playbin.set_state.assert_called_with(Gst.State.NULL)
+        self.module._destroy_player.assert_called()
+        self.module.event_playback_update.send.assert_called()
+
+        # do_stop no-op if player already removed
+        self.module.players = {}
+        on_complete()
+
 
 class TestAudioplayerPlaybackUpdateEvent(unittest.TestCase):
     def setUp(self):
