@@ -9,6 +9,14 @@
         cl-title="Fade out (ms)" cl-model="$ctrl.fadeOutMs" cl-min="0"
         cl-click="$ctrl.saveFade()"
     ></config-number>
+    <config-number
+        cl-title="Playlist crossfade (ms)" cl-model="$ctrl.crossfadeMs" cl-min="0"
+        cl-click="$ctrl.saveFade()"
+    ></config-number>
+    <config-note
+        cl-type="info" cl-icon="information"
+        cl-note="Crossfade overlaps the end of the current track with the start of the next one. Set to 0 to disable (hard cut)."
+    ></config-note>
 
     <config-section cl-title="Create player"></config-section>
     <config-text

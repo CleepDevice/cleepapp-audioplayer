@@ -19,6 +19,7 @@ from cleep.exception import (
 )
 from cleep.core import CleepModule
 from cleep.common import CATEGORIES
+from .crossfade import CrossfadeEngine
 
 
 class Audioplayer(CleepModule):
@@ -27,10 +28,11 @@ class Audioplayer(CleepModule):
 
     Generic audio player based on GStreamer playbin.
     Players stay alive while paused for fast resume; stop destroys the player.
+    Optional playlist crossfade uses a dual-channel audiomixer engine.
     """
 
     MODULE_AUTHOR = "Cleep"
-    MODULE_VERSION = "1.4.0"
+    MODULE_VERSION = "1.5.0"
     MODULE_DEPS = []
     MODULE_DESCRIPTION = "Enjoy music playback"
     MODULE_LONGDESCRIPTION = (
@@ -41,6 +43,7 @@ class Audioplayer(CleepModule):
         "<li>Read audio metadata when available</li>"
         "<li>Implement minimalist player playlist</li>"
         "<li>Fade in/out support</li>"
+        "<li>Playlist crossfade (overlapping tracks)</li>"
         "<li>Propagate significative player events</li>"
         "</ul>"
     )
@@ -57,6 +60,7 @@ class Audioplayer(CleepModule):
         "alsa_device": "default",
         "fade_in_ms": 0,
         "fade_out_ms": 0,
+        "crossfade_ms": 0,  # 0 disables; overlapping track transition duration
     }
 
     # Supported audio formats (mime). playbin decodes them; list is used for validation.
@@ -145,9 +149,11 @@ class Audioplayer(CleepModule):
                 "target_volume": 1.0,
                 "fade": None,
                 "position": None,
+                "crossfade": None,
             },
         }
-        self.__create_playbin(player)
+        if not self.__crossfade_enabled():
+            self.__create_playbin(player)
         return player
 
     def __create_playbin(self, player):
@@ -195,17 +201,32 @@ class Audioplayer(CleepModule):
         Destroy player. This method should be exclusively used during app cycle life.
         """
         player["internal"]["fade"] = None
+        engine = player["internal"].get("crossfade")
+        if engine:
+            try:
+                engine.destroy()
+            except Exception:
+                self.logger.exception(
+                    'Unable to destroy crossfade engine for player "%s"',
+                    player.get("uuid"),
+                )
+            player["internal"]["crossfade"] = None
         if player["player"]:
             player["player"].set_state(Gst.State.NULL)
             player["player"] = None
         if player["uuid"] in self.players:
             del self.players[player["uuid"]]
 
+    def __crossfade_enabled(self):
+        """Return True when playlist crossfade duration is configured."""
+        return (self._get_config_field("crossfade_ms") or 0) > 0
+
     def _on_process(self):
         """
         On process
         """
         self.__process_fades()
+        self.__process_crossfades()
         self.__process_players_messages()
 
         players_to_delete = [
@@ -285,6 +306,162 @@ class Audioplayer(CleepModule):
         """
         if player_uuid in self.players:
             self.players[player_uuid]["internal"]["fade"] = None
+
+    def __process_crossfades(self):
+        """
+        Advance crossfade engines and auto-start overlapping transitions.
+        """
+        if not self.__crossfade_enabled():
+            return
+
+        crossfade_ms = self._get_config_field("crossfade_ms")
+        for player_uuid, player in list(self.players.items()):
+            if player["internal"]["to_destroy"]:
+                continue
+            engine = player["internal"].get("crossfade")
+            if not engine:
+                continue
+
+            try:
+                engine.process()
+                list(engine.poll_messages())
+            except Exception:
+                self.logger.exception(
+                    'Crossfade process failed for player "%s"', player_uuid
+                )
+                continue
+
+            if engine.is_crossfading or engine.get_state() != "playing":
+                continue
+            if engine.should_crossfade(crossfade_ms):
+                self.__auto_crossfade_next(player_uuid)
+
+    def __ensure_crossfade_engine(self, player_uuid):
+        """
+        Create CrossfadeEngine for player if missing.
+
+        Returns:
+            CrossfadeEngine
+        """
+        player = self.players[player_uuid]
+        engine = player["internal"].get("crossfade")
+        if engine:
+            return engine
+
+        def on_eos():
+            self.__on_crossfade_eos(player_uuid)
+
+        def on_error(message):
+            self.logger.error(
+                'Crossfade engine error on player "%s": %s', player_uuid, message
+            )
+
+        engine = CrossfadeEngine(
+            audio_sink=self._get_config_field("audio_sink"),
+            alsa_device=self._get_config_field("alsa_device"),
+            logger=self.logger,
+            on_eos=on_eos,
+            on_error=on_error,
+        )
+        player["internal"]["crossfade"] = engine
+        if player["player"]:
+            try:
+                player["player"].set_state(Gst.State.NULL)
+            except Exception:
+                pass
+            player["player"] = None
+        return engine
+
+    def __on_crossfade_eos(self, player_uuid):
+        """
+        Active track ended without an overlapping successor (or duration unknown).
+        """
+        if player_uuid not in self.players:
+            return
+        self.logger.debug('Crossfade EOS on player "%s"', player_uuid)
+        if not self.__play_next_track(player_uuid):
+            if player_uuid in self.players:
+                self.__send_crossfade_playback_event(player_uuid, force=True)
+
+    def __auto_crossfade_next(self, player_uuid):
+        """
+        Start overlapping transition to the next playlist track when near EOS.
+        """
+        if player_uuid not in self.players:
+            return False
+        player = self.players[player_uuid]
+        playlist = player["playlist"]
+        engine = player["internal"].get("crossfade")
+        if not engine or engine.is_crossfading:
+            return False
+
+        if playlist["index"] + 1 >= len(playlist["tracks"]):
+            if not playlist["repeat"]:
+                return False
+            if playlist["shuffle"]:
+                self.shuffle_playlist(player_uuid)
+            playlist["index"] = 0
+        else:
+            playlist["index"] += 1
+
+        playlist["duration"] = None
+        playlist["metadata"] = None
+        player["internal"]["tags_sent"] = False
+        next_track = playlist["tracks"][playlist["index"]]
+        return self.__crossfade_to_track(player_uuid, next_track)
+
+    def __crossfade_to_track(self, player_uuid, track):
+        """
+        Crossfade current playback into ``track``.
+        """
+        player = self.players[player_uuid]
+        engine = self.__ensure_crossfade_engine(player_uuid)
+
+        if Audioplayer._is_filepath(track["resource"]):
+            audio_format = self.__get_file_audio_format(track["resource"])
+            if not audio_format:
+                raise CommandError("Audio file not supported")
+            track["audio_format"] = audio_format
+
+        uri = self.__resource_to_uri(track["resource"])
+        volume = float(player["playlist"]["volume"] / 100.0)
+        player["internal"]["target_volume"] = volume
+        crossfade_ms = self._get_config_field("crossfade_ms")
+
+        try:
+            engine.crossfade_to(uri, crossfade_ms, volume)
+            player["internal"]["last_state"] = Gst.State.PLAYING
+            self.logger.info(
+                'Player "%s" crossfading to %s (%sms)',
+                player_uuid,
+                track,
+                crossfade_ms,
+            )
+            self.__send_crossfade_playback_event(player_uuid, force=True)
+            return True
+        except Exception:
+            self.logger.exception(
+                'Error crossfading to track %s on player "%s"', track, player_uuid
+            )
+            return False
+
+    def __send_crossfade_playback_event(self, player_uuid, force=False):
+        """Send playback.update from crossfade engine state."""
+        if player_uuid not in self.players:
+            return
+        player = self.players[player_uuid]
+        engine = player["internal"].get("crossfade")
+        state_name = engine.get_state() if engine else "stopped"
+        state_map = {
+            "playing": Gst.State.PLAYING,
+            "paused": Gst.State.PAUSED,
+            "stopped": Gst.State.NULL,
+        }
+        gst_state = state_map.get(state_name, Gst.State.NULL)
+        if not force and gst_state == player["internal"]["last_state"]:
+            return
+        player["internal"]["last_state"] = gst_state
+        self.event_playback_update.send(self.__get_playback_info(player_uuid))
 
     def __process_players_messages(self):
         """
@@ -558,6 +735,30 @@ class Audioplayer(CleepModule):
         self._set_config_field("fade_in_ms", fade_in_ms)
         self._set_config_field("fade_out_ms", fade_out_ms)
 
+    def set_crossfade(self, crossfade_ms):
+        """
+        Configure playlist crossfade duration.
+
+        When > 0, track transitions overlap (outgoing fades out while incoming
+        fades in) using the audiomixer engine. When 0, transitions are hard cuts
+        on playbin (existing behaviour).
+
+        Args:
+            crossfade_ms (int): overlap duration in milliseconds (0 disables)
+        """
+        self._check_parameters(
+            [
+                {
+                    "name": "crossfade_ms",
+                    "value": crossfade_ms,
+                    "type": int,
+                    "validator": lambda v: v >= 0,
+                    "message": "crossfade_ms must be >= 0",
+                },
+            ]
+        )
+        self._set_config_field("crossfade_ms", crossfade_ms)
+
     def add_track(self, player_uuid, resource, audio_format=None, track_index=None):
         """
         Add track in specified player playlist.
@@ -721,7 +922,7 @@ class Audioplayer(CleepModule):
         Args:
             resource (str): local filepath or url
             audio_format (str, optional): audio format (mime). Mandatory if resource is an url. Defaults to None.
-            volume (int, optional): player volume. Defaults to 100.
+            volume (int, optional): Playback volume between 1 and 100. Defaults to 100.
             paused (bool, optional): start playback paused. Useful to create player instance in silently. Defaults to False.
             repeat (bool, optional): enable repeat. Defaults to False.
             shuffle (bool, optional): True to shuffle playlist at end of it. Defaults to False.
@@ -773,9 +974,14 @@ class Audioplayer(CleepModule):
     def __play_track(self, track, player_uuid, volume=None, paused=False):
         """
         Play track on existing playbin (reuses playbin, only changes URI)
+        or on CrossfadeEngine when crossfade is enabled.
         """
         if player_uuid not in self.players:
             raise CommandError(f'Player "{player_uuid}" does not exist')
+
+        if self.__crossfade_enabled():
+            self.__play_track_crossfade(track, player_uuid, volume, paused)
+            return
 
         player = self.players[player_uuid]
         playbin = player["player"]
@@ -828,6 +1034,43 @@ class Audioplayer(CleepModule):
         except Exception as error:
             self.logger.exception("Error playing track %s with %s", track, player_uuid)
             raise error
+
+    def __play_track_crossfade(self, track, player_uuid, volume=None, paused=False):
+        """
+        Play track using CrossfadeEngine (hard start / replace, no overlap).
+        """
+        player = self.players[player_uuid]
+        engine = self.__ensure_crossfade_engine(player_uuid)
+        self.__cancel_fade(player_uuid)
+
+        if Audioplayer._is_filepath(track["resource"]):
+            audio_format = self.__get_file_audio_format(track["resource"])
+            if not audio_format:
+                raise CommandError("Audio file not supported")
+            track["audio_format"] = audio_format
+
+        volume = volume if volume is not None else player["playlist"]["volume"]
+        target_volume = float(volume / 100.0)
+        player["internal"]["target_volume"] = target_volume
+        player["playlist"]["volume"] = volume
+        player["playlist"]["metadata"] = None
+        player["internal"]["tags_sent"] = False
+        player["playlist"]["duration"] = None
+
+        uri = self.__resource_to_uri(track["resource"])
+        engine.play(uri, target_volume)
+        if paused:
+            engine.pause()
+            player["internal"]["last_state"] = Gst.State.PAUSED
+            self.logger.info(
+                'Player "%s" created paused (crossfade) for %s', player_uuid, track
+            )
+        else:
+            player["internal"]["last_state"] = Gst.State.PLAYING
+            self.logger.info(
+                'Player "%s" is playing %s (crossfade)', player_uuid, track
+            )
+        self.__send_crossfade_playback_event(player_uuid, force=True)
 
     def _get_track_index(self, player_uuid, track):
         """
@@ -1070,6 +1313,12 @@ class Audioplayer(CleepModule):
             self._set_volume(player_uuid, volume)
 
         player = self.players[player_uuid]
+        engine = player["internal"].get("crossfade")
+        if engine:
+            return self.__pause_playback_crossfade(
+                player_uuid, force_pause, force_play
+            )
+
         playbin = player["player"]
         new_state = Gst.State.PAUSED if force_pause else Gst.State.PLAYING
         if (force_pause and force_play) or (not force_pause and not force_play):
@@ -1129,6 +1378,27 @@ class Audioplayer(CleepModule):
         player["internal"]["last_state"] = Gst.State.PAUSED
         return self._get_player_state(Gst.State.PAUSED)
 
+    def __pause_playback_crossfade(self, player_uuid, force_pause, force_play):
+        """Toggle pause on CrossfadeEngine backend."""
+        player = self.players[player_uuid]
+        engine = player["internal"]["crossfade"]
+        current = engine.get_state()
+        new_paused = force_pause
+        if (force_pause and force_play) or (not force_pause and not force_play):
+            new_paused = current == "playing"
+
+        self.__cancel_fade(player_uuid)
+        if new_paused:
+            engine.pause()
+            player["internal"]["last_state"] = Gst.State.PAUSED
+            self.__send_crossfade_playback_event(player_uuid, force=True)
+            return self._get_player_state(Gst.State.PAUSED)
+
+        engine.resume()
+        player["internal"]["last_state"] = Gst.State.PLAYING
+        self.__send_crossfade_playback_event(player_uuid, force=True)
+        return self._get_player_state(Gst.State.PLAYING)
+
     def stop_playback(self, player_uuid):
         """
         Stop specified player playback and destroy player.
@@ -1157,12 +1427,23 @@ class Audioplayer(CleepModule):
         fade_out_ms = self._get_config_field("fade_out_ms")
         player = self.players[player_uuid]
         playbin = player["player"]
+        engine = player["internal"].get("crossfade")
 
         def do_stop():
             if player_uuid not in self.players:
                 return
-            self.players[player_uuid]["player"].set_state(Gst.State.NULL)
-            self._destroy_player(self.players[player_uuid])
+            current = self.players[player_uuid]
+            if current.get("player"):
+                current["player"].set_state(Gst.State.NULL)
+            crossfade = current["internal"].get("crossfade")
+            if crossfade:
+                try:
+                    crossfade.stop()
+                except Exception:
+                    self.logger.exception(
+                        'Unable to stop crossfade engine for "%s"', player_uuid
+                    )
+            self._destroy_player(current)
             self.event_playback_update.send(
                 {
                     "playeruuid": player_uuid,
@@ -1171,7 +1452,7 @@ class Audioplayer(CleepModule):
             )
 
         self.__cancel_fade(player_uuid)
-        if fade_out_ms > 0 and playbin:
+        if fade_out_ms > 0 and playbin and not engine:
             current_volume = playbin.get_property("volume")
             self.__start_fade(
                 player_uuid,
@@ -1239,7 +1520,17 @@ class Audioplayer(CleepModule):
             'Found next track to play on player "%s": %s', player_uuid, next_track
         )
         try:
-            self.__play_track(next_track, player_uuid)
+            engine = self.players[player_uuid]["internal"].get("crossfade")
+            if (
+                self.__crossfade_enabled()
+                and engine
+                and engine.get_state() == "playing"
+                and not engine.is_crossfading
+            ):
+                if not self.__crossfade_to_track(player_uuid, next_track):
+                    return False
+            else:
+                self.__play_track(next_track, player_uuid)
         except Exception:
             self.logger.exception("Error playing next track %s", next_track)
             return False
@@ -1437,14 +1728,17 @@ class Audioplayer(CleepModule):
 
     def _set_volume(self, player_uuid, volume):
         """
-        Set player volume on playbin
+        Set player volume on playbin or crossfade engine
         """
         self.logger.debug("Set player %s volume to %s", player_uuid, volume)
         self.__cancel_fade(player_uuid)
         target = float(volume / 100.0)
         self.players[player_uuid]["internal"]["target_volume"] = target
         self.players[player_uuid]["playlist"]["volume"] = volume
-        if self.players[player_uuid]["player"]:
+        engine = self.players[player_uuid]["internal"].get("crossfade")
+        if engine:
+            engine.set_volume(target)
+        elif self.players[player_uuid]["player"]:
             self.players[player_uuid]["player"].set_property("volume", target)
 
     def set_repeat(self, player_uuid, repeat, shuffle=False):

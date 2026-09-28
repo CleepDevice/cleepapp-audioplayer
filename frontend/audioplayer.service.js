@@ -74,6 +74,12 @@ function($rootScope, rpcService) {
         });
     };
 
+    self.setCrossfade = function(crossfadeMs) {
+        return rpcService.sendCommand('set_crossfade', 'audioplayer', {
+            crossfade_ms: crossfadeMs,
+        });
+    };
+
     self.shufflePlaylist = function(playerId, repeat) {
         return rpcService.sendCommand('shuffle_playlist', 'audioplayer', {
             player_uuid: playerId,

@@ -26,6 +26,7 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
         self.players = [];
         self.fadeInMs = 0;
         self.fadeOutMs = 0;
+        self.crossfadeMs = 0;
 
         self.$onInit = function() {
             cleepService.getModuleConfig('audioplayer');
@@ -43,9 +44,21 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
                 .then((response) => {
                     if (response && response.error) {
                         toastService.error('Unable to save fade settings');
+                        throw new Error('fade');
+                    }
+                    return audioplayerService.setCrossfade(Number(self.crossfadeMs) || 0);
+                })
+                .then((response) => {
+                    if (response && response.error) {
+                        toastService.error('Unable to save crossfade settings');
                         return;
                     }
                     cleepService.reloadModuleConfig('audioplayer');
+                })
+                .catch((error) => {
+                    if (error && error.message !== 'fade') {
+                        toastService.error('Unable to save fade settings');
+                    }
                 });
         };
 
@@ -182,6 +195,7 @@ function($rootScope, cleepService, toastService, audioplayerService, $mdDialog) 
                 }
                 self.fadeInMs = config.fade_in_ms || 0;
                 self.fadeOutMs = config.fade_out_ms || 0;
+                self.crossfadeMs = config.crossfade_ms || 0;
             },
             true
         );

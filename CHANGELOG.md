@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [Unreleased]
+### Added
+- Playlist crossfade via `CrossfadeEngine` (`set_crossfade` / config `crossfade_ms`)
+- UI setting for playlist crossfade duration
+
 ## [1.4.0] - 2026-09-11
 ### Changed
 - Replace manual GStreamer pipelines with playbin (simpler internals, format auto-detection)

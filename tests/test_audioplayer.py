@@ -3120,6 +3120,143 @@ class TestAudioplayer(unittest.TestCase):
         self.module.players = {}
         on_complete()
 
+    def test_set_crossfade(self):
+        self.init()
+        self.module.set_crossfade(3500)
+        self.assertEqual(self.module._get_config_field("crossfade_ms"), 3500)
+
+    def test_set_crossfade_invalid(self):
+        self.init()
+        with self.assertRaises(InvalidParameter):
+            self.module.set_crossfade(-1)
+
+    def test__crossfade_enabled(self):
+        self.init()
+        self.assertFalse(self.module._Audioplayer__crossfade_enabled())
+        self.module._set_config_field("crossfade_ms", 2000)
+        self.assertTrue(self.module._Audioplayer__crossfade_enabled())
+
+    def test__create_player_skips_playbin_when_crossfade_enabled(self):
+        self.init()
+        self.module._set_config_field("crossfade_ms", 1500)
+        with patch.object(self.module, "_Audioplayer__create_playbin") as create_mock:
+            player = self.module._Audioplayer__create_player()
+        create_mock.assert_not_called()
+        self.assertIsNone(player["player"])
+        self.assertIsNone(player["internal"]["crossfade"])
+
+    def test__play_track_uses_crossfade_engine(self):
+        self.init()
+        self.module._set_config_field("crossfade_ms", 2000)
+        track = {"resource": "https://example.com/a.mp3", "audio_format": "audio/mpeg"}
+        player = {
+            "uuid": "the-uuid",
+            "player": None,
+            "playlist": {
+                "index": 0,
+                "tracks": [track],
+                "volume": 80,
+                "metadata": None,
+                "duration": None,
+            },
+            "internal": {
+                "to_destroy": False,
+                "tags_sent": False,
+                "last_state": Gst.State.NULL,
+                "target_volume": 1.0,
+                "fade": None,
+                "position": None,
+                "crossfade": None,
+            },
+        }
+        self.module.players = {"the-uuid": player}
+        engine = Mock()
+        engine.get_state.return_value = "playing"
+        self.module._Audioplayer__ensure_crossfade_engine = Mock(return_value=engine)
+        self.module._Audioplayer__send_crossfade_playback_event = Mock()
+        self.module._Audioplayer__resource_to_uri = Mock(
+            return_value="https://example.com/a.mp3"
+        )
+
+        self.module._Audioplayer__play_track(track, "the-uuid", volume=80)
+
+        engine.play.assert_called_with("https://example.com/a.mp3", 0.8)
+        self.assertEqual(player["internal"]["last_state"], Gst.State.PLAYING)
+
+    def test__auto_crossfade_next(self):
+        self.init()
+        self.module._set_config_field("crossfade_ms", 3000)
+        engine = Mock()
+        engine.is_crossfading = False
+        player = {
+            "uuid": "the-uuid",
+            "player": None,
+            "playlist": {
+                "index": 0,
+                "tracks": [
+                    {"resource": "/tmp/a.mp3", "audio_format": "audio/mpeg"},
+                    {"resource": "/tmp/b.mp3", "audio_format": "audio/mpeg"},
+                ],
+                "volume": 100,
+                "repeat": False,
+                "shuffle": False,
+                "metadata": None,
+                "duration": None,
+            },
+            "internal": {
+                "crossfade": engine,
+                "tags_sent": True,
+            },
+        }
+        self.module.players = {"the-uuid": player}
+        self.module._Audioplayer__crossfade_to_track = Mock(return_value=True)
+
+        result = self.module._Audioplayer__auto_crossfade_next("the-uuid")
+
+        self.assertTrue(result)
+        self.assertEqual(player["playlist"]["index"], 1)
+        self.module._Audioplayer__crossfade_to_track.assert_called()
+
+    def test__process_crossfades_triggers_auto(self):
+        self.init()
+        self.module._set_config_field("crossfade_ms", 2000)
+        engine = Mock()
+        engine.is_crossfading = False
+        engine.get_state.return_value = "playing"
+        engine.should_crossfade.return_value = True
+        engine.poll_messages.return_value = []
+        self.module.players = {
+            "the-uuid": {
+                "internal": {"to_destroy": False, "crossfade": engine},
+            }
+        }
+        self.module._Audioplayer__auto_crossfade_next = Mock()
+
+        self.module._Audioplayer__process_crossfades()
+
+        engine.process.assert_called_once()
+        self.module._Audioplayer__auto_crossfade_next.assert_called_with("the-uuid")
+
+    def test__set_volume_on_crossfade_engine(self):
+        self.init()
+        engine = Mock()
+        self.module.players = {
+            "the-uuid": {
+                "player": None,
+                "playlist": {"volume": 50},
+                "internal": {
+                    "fade": None,
+                    "target_volume": 0.5,
+                    "crossfade": engine,
+                },
+            }
+        }
+
+        self.module._set_volume("the-uuid", 70)
+
+        engine.set_volume.assert_called_with(0.7)
+        self.assertEqual(self.module.players["the-uuid"]["playlist"]["volume"], 70)
+
 
 class TestAudioplayerPlaybackUpdateEvent(unittest.TestCase):
     def setUp(self):
