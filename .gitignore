@@ -8,3 +8,5 @@ docs/source
 docs/_build
 .vscode
 **/*.swp
+.venv
+.pytest_cache
