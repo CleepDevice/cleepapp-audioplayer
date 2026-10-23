@@ -1,11 +1,16 @@
 # CHANGELOG
 
 ## [Unreleased]
+
+### Changed
+- Replace postinst/postuninst shell scripts with declarative `scripts/postinst.json` and `scripts/postuninst.json`
+
 ### Added
 - Playlist crossfade via `CrossfadeEngine` (`set_crossfade` / config `crossfade_ms`)
 - UI setting for playlist crossfade duration
 
 ## [1.4.0] - 2026-09-11
+
 ### Changed
 - Replace manual GStreamer pipelines with playbin (simpler internals, format auto-detection)
 - Reuse playbin instance across tracks and pause/resume for faster playback resume
@@ -16,6 +21,7 @@
 - Auto-recreate playbin on failed resume, restoring track position
 
 ## [1.3.0] - 2024-10-14
+
 ### Fixed
 - Fix documentation
 
@@ -23,6 +29,7 @@
 - Migrate to Cleep components
 
 ## [1.2.0] - 2023-03-11
+
 ### Fixed
 - When playback stopped on UI, player stays alive
 
@@ -31,6 +38,7 @@
 - Add function to start playback of specific playlist track
 
 ## [1.1.0] - 2022-01-14
+
 ### Added
 _ Create player silently (do not start music after player created)
 _ Add shuffle playlist option after playlist repeated
@@ -43,6 +51,7 @@ _ Update event returns internal state instead of Gst state
 - Fix issue checking parameters of add_tracks command
 
 ## [1.0.0] - 2021-11-26
+
 ### Added
 - First release
 
