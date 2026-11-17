@@ -2,11 +2,9 @@
 # -*- coding: utf-8 -*-
 """Unit tests for CrossfadeEngine (GStreamer audiomixer dual-channel)."""
 import logging
-import sys
 import unittest
 from unittest.mock import Mock, patch, call
 
-sys.path.append("../")
 
 from backend.crossfade import CrossfadeEngine, Gst
 from cleep.libs.tests.common import get_log_level

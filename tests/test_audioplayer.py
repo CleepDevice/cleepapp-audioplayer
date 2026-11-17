@@ -3,9 +3,7 @@
 from cleep.libs.tests import session
 import unittest
 import logging
-import sys
 
-sys.path.append("../")
 from backend.audioplayer import Audioplayer
 from backend.audioplayer import Gst
 from backend.audioplayerplaybackupdateevent import AudioplayerPlaybackUpdateEvent
